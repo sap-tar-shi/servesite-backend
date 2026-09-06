@@ -175,3 +175,21 @@ LOGGING = {
         "level": "INFO",
     },
 }
+
+
+INSTALLED_APPS += ["storages"]
+
+AWS_ACCESS_KEY_ID = env_config("AWS_ACCESS_KEY_ID", default="")
+AWS_SECRET_ACCESS_KEY = env_config("AWS_SECRET_ACCESS_KEY", default="")
+AWS_STORAGE_BUCKET_NAME = env_config("AWS_STORAGE_BUCKET_NAME", default="")
+AWS_S3_REGION_NAME = env_config("AWS_S3_REGION_NAME", default="ap-south-1")
+AWS_CLOUDFRONT_DOMAIN = env_config("AWS_CLOUDFRONT_DOMAIN", default="")
+AWS_S3_CUSTOM_DOMAIN = AWS_CLOUDFRONT_DOMAIN
+AWS_DEFAULT_ACL = None
+AWS_QUERYSTRING_AUTH = False
+
+if AWS_STORAGE_BUCKET_NAME:
+    STORAGES = {
+        "default": {"BACKEND": "storages.backends.s3.S3Storage"},
+        "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
+    }
