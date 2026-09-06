@@ -1,8 +1,10 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.parsers import MultiPartParser
 from accounts.permissions import HasModulePermission
-from .models import SiteConfig, Section
+from .tasks import generate_thumbnail
+from .models import SiteConfig, Section, MediaAsset
 from .manifest import filter_to_whitelisted_fields, NonWhitelistedFieldError, get_editable_fields
 
 
@@ -75,3 +77,41 @@ class EditableFieldsView(APIView):
             return Response({"detail": "No site config for this tenant."}, status=status.HTTP_404_NOT_FOUND)
 
         return Response({"editable_fields": sorted(get_editable_fields(site_config))})
+
+
+class MediaUploadView(APIView):
+    """
+    POST /api/cms/media/  (multipart/form-data, field name "file")
+
+    Stores the file in S3 (via Django's configured storage backend, P0-T7),
+    creates a MediaAsset row scoped to the current tenant, and kicks off
+    async thumbnailing. Returns the CDN URL immediately - the thumbnail
+    URL populates a moment later once the Celery task completes.
+    """
+
+    permission_classes = [HasModulePermission("site_customization")]
+    parser_classes = [MultiPartParser]
+
+    def post(self, request):
+        uploaded_file = request.FILES.get("file")
+        if uploaded_file is None:
+            return Response({"detail": "No file provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+        from django.core.files.storage import default_storage
+        storage_key = f"tenants/{request.tenant.slug}/{uploaded_file.name}"
+        saved_path = default_storage.save(storage_key, uploaded_file)
+        url = default_storage.url(saved_path)
+
+        asset = MediaAsset.objects.create(
+            tenant=request.tenant,
+            storage_key=saved_path,
+            url=url,
+            media_type=MediaAsset.TYPE_IMAGE,
+        )
+
+        generate_thumbnail.delay(str(asset.id))
+
+        return Response(
+            {"id": str(asset.id), "url": asset.url, "thumbnail_url": asset.thumbnail_url},
+            status=status.HTTP_201_CREATED,
+        )
