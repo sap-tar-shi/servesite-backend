@@ -9,5 +9,5 @@ def widget_list_view(request):
     cross-tenant data. Real endpoints arrive in P1-T14+ and will follow this
     same request-scoped-manager pattern (no unscoped/raw queries in view code).
     """
-    names = list(Widget.objects.values_list("name", flat=True))
-    return JsonResponse({"widgets": names})
+    names = list(Widget.unscoped.values_list("name", flat=True))
+    return JsonResponse({"widgets": names})import os 
