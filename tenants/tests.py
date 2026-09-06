@@ -1,5 +1,5 @@
 import threading
-from django.test import TestCase, Client
+from django.test import TestCase
 from .context import set_current_tenant, get_current_tenant, reset_current_tenant
 from .models import Tenant
 
@@ -36,7 +36,7 @@ class TenantContextIsolationTests(TestCase):
 
         self.assertEqual(results["tenant-A"], "tenant-A")
         self.assertEqual(results["tenant-B"], "tenant-B")
-    
+
 
 class TenantResolutionMiddlewareTests(TestCase):
     def setUp(self):

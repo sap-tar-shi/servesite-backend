@@ -23,9 +23,7 @@ class Tenant(models.Model):
     slug = models.SlugField(unique=True, max_length=63)
     name = models.CharField(max_length=255)
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_TRIAL)
-    staff_account_mode = models.CharField(
-        max_length=20, choices=STAFF_MODE_CHOICES, default=STAFF_MODE_SHARED
-    )
+    staff_account_mode = models.CharField(max_length=20, choices=STAFF_MODE_CHOICES, default=STAFF_MODE_SHARED)
     online_payment_enabled = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

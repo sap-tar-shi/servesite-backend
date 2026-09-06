@@ -35,9 +35,7 @@ class UnscopedManager(models.Manager):
     """
 
     def get_queryset(self):
-        logger.warning(
-            "UNSCOPED_ACCESS model=%s", self.model.__name__
-        )
+        logger.warning("UNSCOPED_ACCESS model=%s", self.model.__name__)
         return super().get_queryset()
 
 
@@ -61,7 +59,9 @@ class TenantScopedModel(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tenant = models.ForeignKey(
-        "tenants.Tenant", on_delete=models.CASCADE, db_index=False  # index provided via Meta.indexes below, not db_index
+        "tenants.Tenant",
+        on_delete=models.CASCADE,
+        db_index=False,  # indexed via Meta.indexes
     )
     created_at = models.DateTimeField(auto_now_add=True)
 
@@ -75,4 +75,4 @@ class TenantScopedModel(models.Model):
         ]
 
 
-from .test_models import Widget  # noqa: F401  (test-only model, see P1-T4)
+from .test_models import Widget  # noqa: E402,F401  (test-only model, see P1-T4)
