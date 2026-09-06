@@ -44,6 +44,10 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "rest_framework",
+    "storages",
+    "tenants",
+    "core",
 ]
 
 MIDDLEWARE = [
@@ -176,8 +180,6 @@ LOGGING = {
     },
 }
 
-
-INSTALLED_APPS += ["storages"]
 
 AWS_ACCESS_KEY_ID = env_config("AWS_ACCESS_KEY_ID", default="")
 AWS_SECRET_ACCESS_KEY = env_config("AWS_SECRET_ACCESS_KEY", default="")
