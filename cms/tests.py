@@ -5,6 +5,7 @@ from tenants.context import set_current_tenant, reset_current_tenant
 from core.db import set_tenant_guc
 from templates_registry.models import TemplateRegistry, TemplateVersion
 from .models import SiteConfig, Page, Section
+from accounts.models import User, Membership
 
 
 class CMSContentIsolationTests(TestCase):
@@ -66,3 +67,76 @@ class CMSContentIsolationTests(TestCase):
 
         self.assertIsInstance(section.content, dict)
         self.assertIn("headline", section.content)
+
+
+class WhitelistedEditFieldTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(slug="edit-tenant", name="Edit Tenant")
+
+        self.template = TemplateRegistry.objects.create(name="edit-template", display_name="Edit Template")
+        self.version = TemplateVersion.objects.create(
+            template=self.template,
+            version="1.0.0",
+            capability_manifest={
+                "sections": ["hero"],
+                "editable_fields": ["headline", "tagline"],
+                "theme_tokens": [],
+            },
+        )
+
+        self.owner = User.objects.create_user(email="owner@edit.com", password="testpass123")
+        Membership.objects.create(user=self.owner, tenant=self.tenant, role=Membership.ROLE_OWNER)
+
+        token = set_current_tenant(self.tenant)
+        set_tenant_guc(self.tenant.id)
+        SiteConfig.objects.create(tenant=self.tenant, template_version=self.version)
+        page = Page.objects.create(tenant=self.tenant, page_type=Page.TYPE_LANDING)
+        Section.objects.create(tenant=self.tenant, page=page, section_type="hero", content={})
+        reset_current_tenant(token)
+        set_tenant_guc(None)
+
+    def _login(self):
+        return self.client.post(
+            "/api/auth/login/",
+            {"email": "owner@edit.com", "password": "testpass123"},
+            content_type="application/json",
+            HTTP_HOST="edit-tenant.localhost",
+        )
+
+    def test_whitelisted_field_update_succeeds(self):
+        self._login()
+        resp = self.client.patch(
+            "/api/cms/site-content/",
+            {"section_type": "hero", "fields": {"headline": "New Headline"}},
+            content_type="application/json",
+            HTTP_HOST="edit-tenant.localhost",
+        )
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["content"]["headline"], "New Headline")
+
+    def test_non_whitelisted_field_rejected_with_403(self):
+        self._login()
+        resp = self.client.patch(
+            "/api/cms/site-content/",
+            {"section_type": "hero", "fields": {"secret_internal_field": "hacked"}},
+            content_type="application/json",
+            HTTP_HOST="edit-tenant.localhost",
+        )
+        self.assertEqual(resp.status_code, 403)
+        self.assertIn("secret_internal_field", resp.json()["rejected_fields"])
+
+    def test_mixed_whitelisted_and_non_whitelisted_rejects_entire_request(self):
+        self._login()
+        resp = self.client.patch(
+            "/api/cms/site-content/",
+            {"section_type": "hero", "fields": {"headline": "OK", "not_allowed": "nope"}},
+            content_type="application/json",
+            HTTP_HOST="edit-tenant.localhost",
+        )
+        self.assertEqual(resp.status_code, 403)
+
+    def test_editable_fields_endpoint_returns_manifest_fields(self):
+        self._login()
+        resp = self.client.get("/api/cms/editable-fields/", HTTP_HOST="edit-tenant.localhost")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(set(resp.json()["editable_fields"]), {"headline", "tagline"})
