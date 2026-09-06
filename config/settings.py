@@ -49,6 +49,7 @@ INSTALLED_APPS = [
     "tenants",
     "core",
     "accounts",
+    "templates_registry",
 ]
 
 MIDDLEWARE = [
