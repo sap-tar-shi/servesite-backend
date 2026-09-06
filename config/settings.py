@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     "storages",
     "tenants",
     "core",
+    "accounts",
 ]
 
 MIDDLEWARE = [
@@ -86,6 +87,8 @@ WSGI_APPLICATION = "config.wsgi.application"
 
 DATABASES = {"default": dj_database_url.config(default=env_config("DATABASE_URL", default="sqlite:///db.sqlite3"))}
 
+#Point Django at the custom user model
+AUTH_USER_MODEL = "accounts.User"
 
 # Password validation
 # https://docs.djangoproject.com/en/6.1/ref/settings/#auth-password-validators
@@ -199,3 +202,7 @@ if AWS_STORAGE_BUCKET_NAME:
         "default": {"BACKEND": "storages.backends.s3.S3Storage"},
         "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.StaticFilesStorage"},
     }
+
+SESSION_COOKIE_DOMAIN = env_config("SESSION_COOKIE_DOMAIN", default=None)
+SESSION_COOKIE_SAMESITE = "Lax"
+CSRF_COOKIE_DOMAIN = env_config("SESSION_COOKIE_DOMAIN", default=None)
