@@ -1,6 +1,7 @@
 import threading
-from django.test import TestCase
+from django.test import TestCase, Client
 from .context import set_current_tenant, get_current_tenant, reset_current_tenant
+from .models import Tenant
 
 
 class TenantContextIsolationTests(TestCase):
@@ -35,3 +36,20 @@ class TenantContextIsolationTests(TestCase):
 
         self.assertEqual(results["tenant-A"], "tenant-A")
         self.assertEqual(results["tenant-B"], "tenant-B")
+    
+
+class TenantResolutionMiddlewareTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(slug="acme-diner", name="Acme Diner")
+
+    def test_known_subdomain_resolves_tenant(self):
+        response = self.client.get("/admin/login/", HTTP_HOST="acme-diner.localhost")
+        self.assertEqual(response.status_code, 200)
+
+    def test_unknown_subdomain_returns_404(self):
+        response = self.client.get("/admin/login/", HTTP_HOST="ghost-tenant.localhost")
+        self.assertEqual(response.status_code, 404)
+
+    def test_reserved_host_has_no_tenant(self):
+        response = self.client.get("/admin/login/", HTTP_HOST="localhost")
+        self.assertEqual(response.status_code, 200)

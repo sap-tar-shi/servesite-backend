@@ -1,22 +1,54 @@
+from django.http import Http404
 from .context import set_current_tenant, reset_current_tenant
+from .models import Tenant
+
+# Hosts that are never tenant subdomains — platform-level surfaces.
+# Extend this as super-admin / marketing domains are added (P3-T5, P4-T4).
+RESERVED_HOSTS = {"localhost", "127.0.0.1", "platform.com", "www.platform.com", "admin.platform.com"}
+
+
+def resolve_slug_from_host(host: str):
+    """
+    Extracts a tenant slug from a Host header of the form
+    '{slug}.platform.com' or '{slug}.localhost' (for local dev).
+    Returns None if the host isn't a tenant-subdomain shape.
+    """
+    host = host.split(":")[0]  # strip port, e.g. localhost:8000
+    if host in RESERVED_HOSTS:
+        return None
+
+    parts = host.split(".")
+    if len(parts) < 2:
+        return None
+
+    # {slug}.localhost  (local dev)  or  {slug}.platform.com  (prod)
+    return parts[0]
 
 
 class TenantContextMiddleware:
     """
-    Sets the current-tenant context for the duration of one request, then
-    always clears it afterward — even on exceptions — so nothing can bleed
-    into a request handled by the same worker afterward.
+    Resolves the current tenant from the request Host header and sets it in
+    an async-safe contextvars.ContextVar for the duration of the request.
+    Always clears the context afterward, even on exceptions.
 
-    P1-T2 scope: prove the set/reset lifecycle is airtight.
-    P1-T3 will replace the placeholder `tenant = None` below with real
-    Host-header -> slug -> Tenant resolution.
+    Unknown/unresolvable tenant slugs raise Http404 rather than silently
+    falling through to an unscoped state — per architecture §4/§5.
     """
 
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
-        tenant = None  # placeholder; P1-T3 resolves this from request.get_host()
+        slug = resolve_slug_from_host(request.get_host())
+
+        tenant = None
+        if slug is not None:
+            try:
+                tenant = Tenant.objects.get(slug=slug)
+            except Tenant.DoesNotExist:
+                raise Http404(f"No tenant found for slug '{slug}'")
+
+        request.tenant = tenant  # convenience accessor alongside the contextvar
         token = set_current_tenant(tenant)
         try:
             response = self.get_response(request)
