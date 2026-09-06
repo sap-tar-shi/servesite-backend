@@ -51,6 +51,7 @@ INSTALLED_APPS = [
     "accounts",
     "templates_registry",
     "cms",
+    "menu",
 ]
 
 MIDDLEWARE = [
