@@ -15,8 +15,8 @@ jobs:
         image: postgres:16
         env:
           POSTGRES_DB: servesite
-          POSTGRES_USER: servesite
-          POSTGRES_PASSWORD: servesite
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
         ports:
           - 5432:5432
         options: >-
@@ -31,12 +31,12 @@ jobs:
           - 6379:6379
 
     env:
-      DATABASE_URL: postgres://servesite:servesite@localhost:5432/servesite
+      DATABASE_URL: postgres://servesite_app:servesite_app@localhost:5432/servesite
       REDIS_URL: redis://localhost:6379/0
       CELERY_BROKER_URL: redis://localhost:6379/0
       SECRET_KEY: ci-test-key
       DEBUG: "False"
-      ALLOWED_HOSTS: localhost,127.0.0.1
+      ALLOWED_HOSTS: localhost,127.0.0.1,.localhost
 
     steps:
       - uses: actions/checkout@v4
@@ -50,6 +50,13 @@ jobs:
           pip install -r requirements.txt
           pip install flake8 black
 
+      - name: Create non-superuser DB role
+        run: |
+          PGPASSWORD=postgres psql -h localhost -U postgres -c "
+            CREATE ROLE servesite_app WITH LOGIN PASSWORD 'servesite_app' CREATEDB;
+            GRANT ALL PRIVILEGES ON DATABASE servesite TO servesite_app;
+          "
+
       - name: Lint (flake8)
         run: flake8 . --max-line-length=120 --exclude=venv,migrations
 
@@ -59,5 +66,8 @@ jobs:
       - name: Run migrations
         run: python manage.py migrate
 
-      - name: Run tests
+      - name: Run isolation test suite (hard gate — must pass before any other tests run)
+        run: python manage.py test core.test_isolation tenants core
+
+      - name: Run full test suite
         run: python manage.py test
