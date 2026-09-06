@@ -64,3 +64,24 @@ class PricingView(APIView):
 
     def get(self, request):
         return Response({"prices": ["confidential-pricing-data"]})
+
+
+class SiteCustomizationView(APIView):
+    permission_classes = [HasModulePermission("site_customization")]
+
+    def get(self, request):
+        return Response({"theme": "confidential-branding-data"})
+
+
+class LiveOrdersView(APIView):
+    permission_classes = [HasModulePermission("live_orders")]
+
+    def get(self, request):
+        return Response({"orders": ["confidential-order-data"]})
+
+
+class BillingView(APIView):
+    permission_classes = [HasModulePermission("billing_staff_domains")]
+
+    def get(self, request):
+        return Response({"billing": "confidential-billing-data"})

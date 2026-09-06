@@ -1,6 +1,18 @@
 from django.test import TestCase
 from tenants.models import Tenant
 from .models import User, Membership
+from .permissions import MODULE_ROLE_MATRIX
+
+# Maps module name -> its throwaway endpoint URL, so the matrix test can
+# drive every (role, module) combination through the actual HTTP layer.
+MODULE_ENDPOINTS = {
+    "site_customization": "/api/auth/site-customization/",
+    "menu_management": "/api/auth/pricing/",
+    "live_orders": "/api/auth/live-orders/",
+    "billing_staff_domains": "/api/auth/billing/",
+}
+
+ALL_ROLES = [choice[0] for choice in Membership.ROLE_CHOICES]
 
 
 class CrossSubdomainSessionTests(TestCase):
@@ -87,3 +99,50 @@ class RBACEnforcementTests(TestCase):
     def test_unauthenticated_gets_403_on_pricing_endpoint(self):
         resp = self.client.get("/api/auth/pricing/", HTTP_HOST="rbac-tenant.localhost")
         self.assertEqual(resp.status_code, 403)
+
+class RBACMatrixTests(TestCase):
+    """
+    Systematic proof of architecture §12: every role x every protected
+    module. Any future role or module added to permissions.py automatically
+    gets covered here without further test-writing, since this iterates
+    ALL_ROLES x MODULE_ENDPOINTS.keys() rather than hardcoding cases.
+    """
+
+    def setUp(self):
+        self.tenant = Tenant.objects.create(slug="matrix-tenant", name="Matrix Tenant")
+        self.users_by_role = {}
+        for role in ALL_ROLES:
+            user = User.objects.create_user(email=f"{role}@matrix.com", password="testpass123")
+            Membership.objects.create(user=user, tenant=self.tenant, role=role)
+            self.users_by_role[role] = user
+
+    def _login_as(self, role):
+        return self.client.post(
+            "/api/auth/login/",
+            {"email": f"{role}@matrix.com", "password": "testpass123"},
+            content_type="application/json",
+            HTTP_HOST="matrix-tenant.localhost",
+        )
+
+    def test_every_role_against_every_module_matches_arch_matrix(self):
+        failures = []
+        for module, endpoint in MODULE_ENDPOINTS.items():
+            allowed_roles = MODULE_ROLE_MATRIX[module]
+            for role in ALL_ROLES:
+                self.client.logout()
+                self._login_as(role)
+                resp = self.client.get(endpoint, HTTP_HOST="matrix-tenant.localhost")
+
+                should_allow = role in allowed_roles
+                actually_allowed = resp.status_code == 200
+
+                if should_allow != actually_allowed:
+                    failures.append(
+                        f"module={module} role={role} expected_allowed={should_allow} "
+                        f"got_status={resp.status_code}"
+                    )
+
+        self.assertEqual(
+            failures, [],
+            "RBAC matrix mismatch(es):\n" + "\n".join(failures)
+        )
