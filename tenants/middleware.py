@@ -1,6 +1,7 @@
 from django.http import Http404
 from .context import set_current_tenant, reset_current_tenant
 from .models import Tenant
+from core.db import set_tenant_guc
 
 # Hosts that are never tenant subdomains — platform-level surfaces.
 # Extend this as super-admin / marketing domains are added (P3-T5, P4-T4).
@@ -48,10 +49,12 @@ class TenantContextMiddleware:
             except Tenant.DoesNotExist:
                 raise Http404(f"No tenant found for slug '{slug}'")
 
-        request.tenant = tenant  # convenience accessor alongside the contextvar
+        request.tenant = tenant
         token = set_current_tenant(tenant)
+        set_tenant_guc(tenant.id if tenant else None)
         try:
             response = self.get_response(request)
         finally:
             reset_current_tenant(token)
+            set_tenant_guc(None)  # clear so the next request on this connection starts clean
         return response
