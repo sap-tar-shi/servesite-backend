@@ -12,7 +12,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 
 from pathlib import Path
 import dj_database_url
-from decouple import config as env_config
+from decouple import config as env_config, Csv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -22,12 +22,14 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = "django-insecure-_&3xevd0w1f+4o%^vcsf88q_q4y3_^-eb&p3i)4@pa8_rocu^v"
+SECRET_KEY = env_config("SECRET_KEY")
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = env_config("DEBUG", default=False, cast=bool)
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = env_config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
+
+ENVIRONMENT = env_config("ENVIRONMENT", default="local")  # local | staging | prod
 
 
 # Application definition
