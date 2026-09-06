@@ -44,22 +44,35 @@ class UnscopedManager(models.Manager):
 class TenantScopedModel(models.Model):
     """
     Abstract base for every tenant-scoped table. Provides:
-    - tenant_id FK (P1-T6 will formalize the FK + composite index convention;
-      this task establishes the manager pair that depends on it existing).
+    - tenant FK (tenant_id column), indexed.
     - `objects`: tenant-scoped default manager (opt-out, not opt-in).
     - `unscoped`: explicit, logged escape hatch.
+    - created_at, for the (tenant_id, created_at) composite index convention
+      used by nearly every tenant-scoped query (architecture §4).
+
+    Concrete subclasses should extend Meta.indexes rather than replace it,
+    e.g.:
+
+        class Meta(TenantScopedModel.Meta):
+            indexes = TenantScopedModel.Meta.indexes + [
+                models.Index(fields=["tenant", "status"]),
+            ]
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     tenant = models.ForeignKey(
-        "tenants.Tenant", on_delete=models.CASCADE, db_index=True
+        "tenants.Tenant", on_delete=models.CASCADE, db_index=False  # index provided via Meta.indexes below, not db_index
     )
+    created_at = models.DateTimeField(auto_now_add=True)
 
     objects = TenantScopedManager()
     unscoped = UnscopedManager()
 
     class Meta:
         abstract = True
+        indexes = [
+            models.Index(fields=["tenant", "created_at"]),
+        ]
 
 
 from .test_models import Widget  # noqa: F401  (test-only model, see P1-T4)
