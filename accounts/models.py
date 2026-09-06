@@ -42,3 +42,35 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     def __str__(self):
         return self.email
+
+class Membership(models.Model):
+    ROLE_OWNER = "owner"
+    ROLE_MANAGER = "manager"
+    ROLE_KITCHEN = "kitchen"
+    ROLE_WAITER = "waiter"
+    ROLE_STAFF = "staff"
+    ROLE_CHOICES = [
+        (ROLE_OWNER, "Owner"),
+        (ROLE_MANAGER, "Manager"),
+        (ROLE_KITCHEN, "Kitchen"),
+        (ROLE_WAITER, "Waiter"),
+        (ROLE_STAFF, "Staff"),
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="memberships")
+    tenant = models.ForeignKey("tenants.Tenant", on_delete=models.CASCADE, related_name="memberships")
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "accounts_membership"
+        constraints = [
+            models.UniqueConstraint(fields=["user", "tenant"], name="unique_user_per_tenant"),
+        ]
+        indexes = [
+            models.Index(fields=["tenant", "role"]),
+        ]
+
+    def __str__(self):
+        return f"{self.user.email} @ {self.tenant.slug} ({self.role})"

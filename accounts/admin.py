@@ -17,3 +17,12 @@ class UserAdmin(BaseUserAdmin):
         (None, {"classes": ("wide",), "fields": ("email", "phone", "password1", "password2")}),
     )
     readonly_fields = ("created_at",)
+
+from .models import Membership
+
+
+@admin.register(Membership)
+class MembershipAdmin(admin.ModelAdmin):
+    list_display = ("user", "tenant", "role", "created_at")
+    list_filter = ("role", "tenant")
+    search_fields = ("user__email", "tenant__slug")
