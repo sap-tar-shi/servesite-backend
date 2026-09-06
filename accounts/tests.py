@@ -55,3 +55,35 @@ class MembershipTests(TestCase):
     def test_duplicate_membership_same_user_tenant_rejected(self):
         with self.assertRaises(Exception):
             Membership.objects.create(user=self.user, tenant=self.tenant_a, role=Membership.ROLE_STAFF)
+
+class RBACEnforcementTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(slug="rbac-tenant", name="RBAC Tenant")
+
+        self.owner = User.objects.create_user(email="owner@rbac.com", password="testpass123")
+        Membership.objects.create(user=self.owner, tenant=self.tenant, role=Membership.ROLE_OWNER)
+
+        self.staff = User.objects.create_user(email="staff@rbac.com", password="testpass123")
+        Membership.objects.create(user=self.staff, tenant=self.tenant, role=Membership.ROLE_STAFF)
+
+    def _login(self, email, password):
+        return self.client.post(
+            "/api/auth/login/",
+            {"email": email, "password": password},
+            content_type="application/json",
+            HTTP_HOST="rbac-tenant.localhost",
+        )
+
+    def test_staff_role_gets_403_on_pricing_endpoint(self):
+        self._login("staff@rbac.com", "testpass123")
+        resp = self.client.get("/api/auth/pricing/", HTTP_HOST="rbac-tenant.localhost")
+        self.assertEqual(resp.status_code, 403)
+
+    def test_owner_role_gets_200_on_pricing_endpoint(self):
+        self._login("owner@rbac.com", "testpass123")
+        resp = self.client.get("/api/auth/pricing/", HTTP_HOST="rbac-tenant.localhost")
+        self.assertEqual(resp.status_code, 200)
+
+    def test_unauthenticated_gets_403_on_pricing_endpoint(self):
+        resp = self.client.get("/api/auth/pricing/", HTTP_HOST="rbac-tenant.localhost")
+        self.assertEqual(resp.status_code, 403)

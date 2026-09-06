@@ -206,3 +206,13 @@ if AWS_STORAGE_BUCKET_NAME:
 SESSION_COOKIE_DOMAIN = env_config("SESSION_COOKIE_DOMAIN", default=None)
 SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_DOMAIN = env_config("SESSION_COOKIE_DOMAIN", default=None)
+
+
+REST_FRAMEWORK = {
+    "DEFAULT_AUTHENTICATION_CLASSES": [
+        "rest_framework.authentication.SessionAuthentication",
+    ],
+    "DEFAULT_PERMISSION_CLASSES": [
+        "rest_framework.permissions.IsAuthenticated",
+    ],
+}
