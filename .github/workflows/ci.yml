@@ -55,6 +55,10 @@ jobs:
           PGPASSWORD=postgres psql -h localhost -U postgres -c "
             CREATE ROLE servesite_app WITH LOGIN PASSWORD 'servesite_app' CREATEDB;
             GRANT ALL PRIVILEGES ON DATABASE servesite TO servesite_app;
+            ALTER DATABASE servesite OWNER TO servesite_app;
+          "
+          PGPASSWORD=postgres psql -h localhost -U postgres -d servesite -c "
+            GRANT ALL ON SCHEMA public TO servesite_app;
           "
 
       - name: Lint (flake8)
