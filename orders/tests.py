@@ -22,7 +22,7 @@ class OrderSnapshotTests(TestCase):
     def test_order_creates_snapshot(self):
         resp = self.client.post("/api/orders/",
             {"items": [{"menu_item_id": str(self.item.id), "quantity": 2, "modifier_ids": []}],
-             "order_type": "takeaway"},
+             "order_type": "takeaway", "payment_mode": "pay_at_counter"},
             content_type="application/json", HTTP_HOST=self.host)
         self.assertEqual(resp.status_code, 201)
         body = resp.json()
@@ -32,7 +32,7 @@ class OrderSnapshotTests(TestCase):
     def test_later_menu_edit_does_not_mutate_historical_order(self):
         resp = self.client.post("/api/orders/",
             {"items": [{"menu_item_id": str(self.item.id), "quantity": 1, "modifier_ids": []}],
-            "order_type": "takeaway"},
+            "order_type": "takeaway", "payment_mode": "pay_at_counter"},
             content_type="application/json", HTTP_HOST=self.host)
         order_id = resp.json()["id"]
 
@@ -55,7 +55,7 @@ class OrderSnapshotTests(TestCase):
     def test_deleting_menu_item_does_not_delete_order_history(self):
         resp = self.client.post("/api/orders/",
             {"items": [{"menu_item_id": str(self.item.id), "quantity": 1, "modifier_ids": []}],
-            "order_type": "takeaway"},
+            "order_type": "takeaway", "payment_mode": "pay_at_counter"},
             content_type="application/json", HTTP_HOST=self.host)
         order_id = resp.json()["id"]
 
@@ -85,7 +85,8 @@ class OrderTypeResolutionTests(TestCase):
 
     def _place(self, extra):
         return self.client.post("/api/orders/",
-            {"items": [{"menu_item_id": str(self.item.id), "quantity": 1, "modifier_ids": []}], **extra},
+            {"items": [{"menu_item_id": str(self.item.id), "quantity": 1, "modifier_ids": []}],
+             "payment_mode": "pay_at_counter", **extra},
             content_type="application/json", HTTP_HOST=self.host)
 
     def test_valid_table_token_resolves_dine_in(self):
@@ -146,7 +147,8 @@ class OrderStateMachineTests(TestCase):
 
     def _place_order(self, order_type="takeaway"):
         resp = self.client.post("/api/orders/",
-            {"items": [{"menu_item_id": str(self.item.id), "quantity": 1, "modifier_ids": []}], "order_type": order_type},
+            {"items": [{"menu_item_id": str(self.item.id), "quantity": 1, "modifier_ids": []}],
+             "order_type": order_type, "payment_mode": "pay_at_counter"},
             content_type="application/json", HTTP_HOST=self.host)
         return resp.json()["id"]
 
@@ -205,3 +207,54 @@ class OrderStateMachineTests(TestCase):
         resp = self.client.post(f"/api/orders/{order_id}/transition/", {"to_status": "accepted"},
             content_type="application/json", HTTP_HOST=self.host)
         self.assertEqual(resp.status_code, 400)
+
+
+class PaymentModeTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(slug="paymode-tenant", name="PayMode Tenant", online_payment_enabled=False)
+        self.connected_tenant = Tenant.objects.create(slug="paymode-connected", name="Connected", online_payment_enabled=True)
+        self.host = "paymode-tenant.localhost"
+        self.connected_host = "paymode-connected.localhost"
+
+        for tenant in (self.tenant, self.connected_tenant):
+            token = set_current_tenant(tenant)
+            set_tenant_guc(tenant.id)
+            category = MenuCategory.objects.create(tenant=tenant, name="Mains")
+            MenuItem.objects.create(tenant=tenant, category=category, name="Burger", price="199.00")
+            reset_current_tenant(token)
+            set_tenant_guc(None)
+
+    def _item_id(self, host):
+        token = set_current_tenant(self.tenant if host == self.host else self.connected_tenant)
+        set_tenant_guc((self.tenant if host == self.host else self.connected_tenant).id)
+        item = MenuItem.objects.get(name="Burger")
+        reset_current_tenant(token)
+        set_tenant_guc(None)
+        return str(item.id)
+
+    def test_pay_at_counter_always_allowed(self):
+        resp = self.client.post("/api/orders/",
+            {"items": [{"menu_item_id": self._item_id(self.host), "quantity": 1, "modifier_ids": []}],
+             "order_type": "takeaway", "payment_mode": "pay_at_counter"},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 201)
+
+    def test_pay_now_rejected_when_not_connected(self):
+        resp = self.client.post("/api/orders/",
+            {"items": [{"menu_item_id": self._item_id(self.host), "quantity": 1, "modifier_ids": []}],
+             "order_type": "takeaway", "payment_mode": "pay_now"},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 400)
+
+    def test_pay_now_allowed_when_connected(self):
+        resp = self.client.post("/api/orders/",
+            {"items": [{"menu_item_id": self._item_id(self.connected_host), "quantity": 1, "modifier_ids": []}],
+             "order_type": "takeaway", "payment_mode": "pay_now"},
+            content_type="application/json", HTTP_HOST=self.connected_host)
+        self.assertEqual(resp.status_code, 201)
+
+    def test_status_endpoint_reflects_connection(self):
+        resp = self.client.get("/api/payments/status/", HTTP_HOST=self.host)
+        self.assertFalse(resp.json()["online_payment_enabled"])
+        resp = self.client.get("/api/payments/status/", HTTP_HOST=self.connected_host)
+        self.assertTrue(resp.json()["online_payment_enabled"])

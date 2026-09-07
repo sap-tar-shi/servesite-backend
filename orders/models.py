@@ -32,6 +32,10 @@ class Order(TenantScopedModel):
     table = models.ForeignKey(Table, on_delete=models.SET_NULL, null=True, blank=True, related_name="orders")
     address = models.CharField(max_length=500, blank=True, default="")
     subtotal = models.DecimalField(max_digits=10, decimal_places=2)
+    payment_mode = models.CharField(
+        max_length=20, choices=[("pay_now", "Pay Now"), ("pay_at_counter", "Pay at Counter")],
+        null=True, blank=True,
+    )    
 
     class Meta(TenantScopedModel.Meta):
         db_table = "orders_order"

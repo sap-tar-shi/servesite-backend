@@ -6,7 +6,7 @@ from django.conf import settings
 from django.http import HttpResponseRedirect
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework import permissions, status
+from rest_framework import permissions, status, generics
 from accounts.permissions import HasModulePermission
 from tenants.models import Tenant
 from tenants.context import set_current_tenant, reset_current_tenant
@@ -96,3 +96,15 @@ class RazorpayConnectCallbackView(APIView):
             set_tenant_guc(None)
 
         return HttpResponseRedirect(f"http://{tenant.slug}.localhost:3000/manage/billing?razorpay=connected")
+
+
+class PaymentStatusView(APIView):
+    """
+    GET /api/payments/status/  - no auth (diner-facing checkout page needs
+    this to decide whether to render the "Pay now" option at all).
+    """
+
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        return Response({"online_payment_enabled": request.tenant.online_payment_enabled})
