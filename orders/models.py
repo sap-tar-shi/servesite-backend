@@ -18,6 +18,7 @@ class Order(TenantScopedModel):
     # this task only needs the columns to exist and hold whatever T5 writes.
     order_type = models.CharField(max_length=20, choices=ORDER_TYPE_CHOICES, null=True, blank=True)
     table = models.ForeignKey(Table, on_delete=models.SET_NULL, null=True, blank=True, related_name="orders")
+    address = models.CharField(max_length=500, blank=True, default="")
     subtotal = models.DecimalField(max_digits=10, decimal_places=2)
 
     class Meta(TenantScopedModel.Meta):
