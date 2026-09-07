@@ -57,6 +57,7 @@ INSTALLED_APPS = [
     "templates_registry",
     "cms",
     "menu",
+    "tables"
 ]
 
 MIDDLEWARE = [
@@ -215,6 +216,7 @@ if AWS_STORAGE_BUCKET_NAME:
 SESSION_COOKIE_DOMAIN = env_config("SESSION_COOKIE_DOMAIN", default=None)
 SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_DOMAIN = env_config("SESSION_COOKIE_DOMAIN", default=None)
+CSRF_TRUSTED_ORIGINS = ["http://*.localhost:3000"]
 
 
 CORS_ALLOWED_ORIGIN_REGEXES = [

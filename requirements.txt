@@ -34,6 +34,7 @@ pyflakes==3.4.0
 python-dateutil==2.9.0.post0
 python-decouple==3.8
 pytokens==0.4.1
+qrcode==8.2
 redis==8.1.0
 requests==2.34.2
 s3transfer==0.19.2

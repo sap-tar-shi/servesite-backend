@@ -5,6 +5,8 @@ from rest_framework import status, permissions
 from .serializers import LoginSerializer
 from .models import Membership
 from .permissions import HasModulePermission
+from django.views.decorators.csrf import ensure_csrf_cookie
+from django.utils.decorators import method_decorator
 
 
 def _serialize_user_with_memberships(user):
@@ -44,8 +46,9 @@ class LogoutView(APIView):
         return Response(status=status.HTTP_204_NO_CONTENT)
 
 
+@method_decorator(ensure_csrf_cookie, name="dispatch")
 class MeView(APIView):
-    permission_classes = [permissions.AllowAny]  # we do our own auth check below to control the status code
+    permission_classes = [permissions.AllowAny]
 
     def get(self, request):
         if not request.user.is_authenticated:
