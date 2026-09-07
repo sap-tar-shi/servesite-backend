@@ -4,6 +4,20 @@ from menu.models import MenuItem
 from tables.models import Table
 
 
+TRANSITIONS = {
+    "placed": {"accepted", "cancelled"},
+    "accepted": {"preparing", "cancelled"},
+    "preparing": {"ready", "cancelled"},
+    "ready": {"served", "handed_over", "cancelled"},
+    "served": {"completed", "paid"},
+    "handed_over": {"completed", "paid"},
+    "paid": {"completed", "refunded"},
+    "completed": {"refunded"},
+    "cancelled": set(),
+    "refunded": set(),
+}
+
+
 class Order(TenantScopedModel):
     STATUS_CHOICES = [
         ("placed", "Placed"), ("accepted", "Accepted"), ("preparing", "Preparing"),
@@ -14,8 +28,6 @@ class Order(TenantScopedModel):
     ORDER_TYPE_CHOICES = [("dine_in", "Dine-in"), ("takeaway", "Takeaway"), ("online", "Online")]
 
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="placed")
-    # order_type/table are nullable - P2-T5 resolves these from QR context;
-    # this task only needs the columns to exist and hold whatever T5 writes.
     order_type = models.CharField(max_length=20, choices=ORDER_TYPE_CHOICES, null=True, blank=True)
     table = models.ForeignKey(Table, on_delete=models.SET_NULL, null=True, blank=True, related_name="orders")
     address = models.CharField(max_length=500, blank=True, default="")
@@ -26,6 +38,22 @@ class Order(TenantScopedModel):
 
     def __str__(self):
         return f"{self.tenant.slug}/order-{str(self.id)[:8]}"
+
+    def transition_to(self, new_status, actor=None):
+        if new_status not in TRANSITIONS.get(self.status, set()):
+            raise ValueError(f"Cannot transition from '{self.status}' to '{new_status}'.")
+
+        if new_status == "served" and self.order_type != "dine_in":
+            raise ValueError("'served' only applies to dine_in orders.")
+        if new_status == "handed_over" and self.order_type not in ("takeaway", "online"):
+            raise ValueError("'handed_over' only applies to takeaway/online orders.")
+
+        old_status = self.status
+        self.status = new_status
+        self.save(update_fields=["status"])
+        OrderEvent.objects.create(
+            tenant=self.tenant, order=self, from_status=old_status, to_status=new_status, actor=actor,
+        )
 
 
 class OrderItem(TenantScopedModel):
@@ -50,3 +78,24 @@ class OrderItem(TenantScopedModel):
 
     def __str__(self):
         return f"{self.item_name} x{self.quantity}"
+
+
+class OrderEvent(TenantScopedModel):
+    """
+    Audit trail per AC: every transition writes an event with actor +
+    timestamp (created_at, inherited). actor is nullable - the very first
+    event (creation -> placed) has no authenticated actor since diners
+    aren't logged in.
+    """
+
+    order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="events")
+    from_status = models.CharField(max_length=20, blank=True, default="")
+    to_status = models.CharField(max_length=20)
+    actor = models.ForeignKey("accounts.User", on_delete=models.SET_NULL, null=True, blank=True, related_name="+")
+
+    class Meta(TenantScopedModel.Meta):
+        db_table = "orders_order_event"
+        ordering = ["created_at"]
+
+    def __str__(self):
+        return f"{self.order_id}: {self.from_status or '(new)'} -> {self.to_status}"

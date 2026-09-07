@@ -3,7 +3,8 @@ from tenants.models import Tenant
 from tenants.context import set_current_tenant, reset_current_tenant
 from core.db import set_tenant_guc
 from menu.models import MenuCategory, MenuItem
-from .models import Order, OrderItem
+from accounts.models import User, Membership
+from .models import Order, OrderItem, OrderEvent
 from tables.models import Table
 
 
@@ -123,4 +124,84 @@ class OrderTypeResolutionTests(TestCase):
 
     def test_no_token_and_no_order_type_rejected(self):
         resp = self._place({})
+        self.assertEqual(resp.status_code, 400)
+
+
+class OrderStateMachineTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(slug="statemachine-tenant", name="State Machine Tenant")
+        self.host = "statemachine-tenant.localhost"
+        self.kitchen = User.objects.create_user(email="kitchen@sm.com", password="testpass123")
+        Membership.objects.create(user=self.kitchen, tenant=self.tenant, role=Membership.ROLE_KITCHEN)
+
+        token = set_current_tenant(self.tenant)
+        set_tenant_guc(self.tenant.id)
+        category = MenuCategory.objects.create(tenant=self.tenant, name="Mains")
+        self.item = MenuItem.objects.create(tenant=self.tenant, category=category, name="Burger", price="199.00")
+        reset_current_tenant(token)
+        set_tenant_guc(None)
+
+        self.client.post("/api/auth/login/", {"email": "kitchen@sm.com", "password": "testpass123"},
+            content_type="application/json", HTTP_HOST=self.host)
+
+    def _place_order(self, order_type="takeaway"):
+        resp = self.client.post("/api/orders/",
+            {"items": [{"menu_item_id": str(self.item.id), "quantity": 1, "modifier_ids": []}], "order_type": order_type},
+            content_type="application/json", HTTP_HOST=self.host)
+        return resp.json()["id"]
+
+    def test_creation_logs_placed_event(self):
+        order_id = self._place_order()
+        token = set_current_tenant(self.tenant)
+        set_tenant_guc(self.tenant.id)
+        events = OrderEvent.objects.filter(order_id=order_id)
+        self.assertEqual(events.count(), 1)
+        self.assertEqual(events.first().to_status, "placed")
+        self.assertIsNone(events.first().actor)
+        reset_current_tenant(token)
+        set_tenant_guc(None)
+
+    def test_valid_transition_succeeds_and_logs_actor(self):
+        order_id = self._place_order()
+        resp = self.client.post(f"/api/orders/{order_id}/transition/", {"to_status": "accepted"},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["status"], "accepted")
+
+        token = set_current_tenant(self.tenant)
+        set_tenant_guc(self.tenant.id)
+        event = OrderEvent.objects.filter(order_id=order_id, to_status="accepted").first()
+        self.assertEqual(event.actor.email, "kitchen@sm.com")
+        reset_current_tenant(token)
+        set_tenant_guc(None)
+
+    def test_illegal_transition_rejected(self):
+        order_id = self._place_order()
+        resp = self.client.post(f"/api/orders/{order_id}/transition/", {"to_status": "completed"},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 400)
+
+    def test_served_rejected_for_takeaway_order(self):
+        order_id = self._place_order(order_type="takeaway")
+        for step in ["accepted", "preparing", "ready"]:
+            self.client.post(f"/api/orders/{order_id}/transition/", {"to_status": step},
+                content_type="application/json", HTTP_HOST=self.host)
+        resp = self.client.post(f"/api/orders/{order_id}/transition/", {"to_status": "served"},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 400)
+
+    def test_handed_over_accepted_for_takeaway_order(self):
+        order_id = self._place_order(order_type="takeaway")
+        for step in ["accepted", "preparing", "ready", "handed_over"]:
+            resp = self.client.post(f"/api/orders/{order_id}/transition/", {"to_status": step},
+                content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["status"], "handed_over")
+
+    def test_cancelled_is_terminal(self):
+        order_id = self._place_order()
+        self.client.post(f"/api/orders/{order_id}/transition/", {"to_status": "cancelled"},
+            content_type="application/json", HTTP_HOST=self.host)
+        resp = self.client.post(f"/api/orders/{order_id}/transition/", {"to_status": "accepted"},
+            content_type="application/json", HTTP_HOST=self.host)
         self.assertEqual(resp.status_code, 400)

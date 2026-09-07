@@ -2,9 +2,10 @@ from rest_framework import generics, permissions, status
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from menu.pricing import price_cart_items, CartPricingError
-from .models import Order, OrderItem
+from .models import Order, OrderItem, OrderEvent
 from .serializers import OrderSerializer
 from tables.models import Table
+from accounts.permissions import HasModulePermission
 
 
 class OrderCreateView(APIView):
@@ -13,53 +14,6 @@ class OrderCreateView(APIView):
     Prices the cart using the exact same server-side logic as P2-T3's
     /cart/validate/, then persists it with a full price/name snapshot -
     nothing here is re-derived from MenuItem/Modifier after this point.
-    """
-
-    permission_classes = [permissions.AllowAny]
-
-    def post(self, request):
-        try:
-            priced_items, subtotal = price_cart_items(request.data.get("items"))
-        except CartPricingError as e:
-            return Response({"detail": e.detail}, status=status.HTTP_400_BAD_REQUEST)
-
-        order = Order.objects.create(tenant=request.tenant, subtotal=subtotal)
-        for p in priced_items:
-            OrderItem.objects.create(
-                tenant=request.tenant,
-                order=order,
-                menu_item=p["menu_item"],
-                item_name=p["menu_item"].name,
-                unit_price=p["unit_price"],
-                quantity=p["quantity"],
-                line_total=p["line_total"],
-                modifiers_snapshot=[{"id": str(m.id), "name": m.name, "price_delta": str(m.price_delta)} for m in p["modifiers"]],
-            )
-
-        return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
-
-
-class OrderDetailView(generics.RetrieveAPIView):
-    """GET /api/orders/<id>/ - lets a diner poll their own order's status."""
-
-    serializer_class = OrderSerializer
-    permission_classes = [permissions.AllowAny]
-
-    def get_queryset(self):
-        return Order.objects.prefetch_related("items")
-
-
-class OrderCreateView(APIView):
-    """
-    POST /api/orders/  - no auth (diners aren't logged in).
-
-    Body: {"items": [...], "table_token": "..."}  OR
-          {"items": [...], "order_type": "takeaway"|"online", "address": "..." (online only)}
-
-    order_type is never trusted from the client when a table_token is
-    present - a scanned QR always means dine_in, regardless of what else
-    is in the body. Absence of a token means the client must explicitly
-    choose takeaway/online (there's no way to default one over the other).
     """
 
     permission_classes = [permissions.AllowAny]
@@ -95,6 +49,8 @@ class OrderCreateView(APIView):
         order = Order.objects.create(
             tenant=request.tenant, subtotal=subtotal, order_type=order_type, table=table, address=address,
         )
+        OrderEvent.objects.create(tenant=request.tenant, order=order, from_status="", to_status="placed", actor=None)
+
         for p in priced_items:
             OrderItem.objects.create(
                 tenant=request.tenant, order=order, menu_item=p["menu_item"], item_name=p["menu_item"].name,
@@ -103,3 +59,33 @@ class OrderCreateView(APIView):
             )
 
         return Response(OrderSerializer(order).data, status=status.HTTP_201_CREATED)
+
+
+class OrderDetailView(generics.RetrieveAPIView):
+    """GET /api/orders/<id>/ - lets a diner poll their own order's status."""
+
+    serializer_class = OrderSerializer
+    permission_classes = [permissions.AllowAny]
+
+    def get_queryset(self):
+        return Order.objects.prefetch_related("items")
+
+
+class OrderTransitionView(APIView):
+    """
+    POST /api/orders/<id>/transition/  Body: {"to_status": "accepted"}
+    Gated by the existing "live_orders" module (owner/manager/kitchen/
+    waiter/staff per §12 - the same permission your P1-T11 throwaway
+    LiveOrdersView proved out).
+    """
+
+    permission_classes = [HasModulePermission("live_orders")]
+
+    def post(self, request, pk):
+        order = Order.objects.get(pk=pk)
+        new_status = request.data.get("to_status")
+        try:
+            order.transition_to(new_status, actor=request.user)
+        except ValueError as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(OrderSerializer(order).data)
