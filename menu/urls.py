@@ -4,6 +4,7 @@ from .views import (
     MenuItemListCreateView, MenuItemDetailView, PublicMenuView,
     ModifierGroupListCreateView, ModifierGroupDetailView,
     ModifierListCreateView, ModifierDetailView,
+    CartValidateView,
 )
 
 urlpatterns = [
@@ -16,4 +17,5 @@ urlpatterns = [
     path("modifier-groups/<uuid:pk>/", ModifierGroupDetailView.as_view(), name="modifier-group-detail"),
     path("modifiers/", ModifierListCreateView.as_view(), name="modifier-list-create"),
     path("modifiers/<uuid:pk>/", ModifierDetailView.as_view(), name="modifier-detail"),
+    path("cart/validate/", CartValidateView.as_view(), name="cart-validate"),
 ]

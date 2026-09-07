@@ -4,7 +4,7 @@ from tenants.context import set_current_tenant, reset_current_tenant
 from core.db import set_tenant_guc
 from core.isolation_testing import TwoTenantIsolationTestCase
 from accounts.models import User, Membership
-from .models import MenuCategory, MenuItem
+from .models import MenuCategory, MenuItem, ModifierGroup, Modifier
 from unittest.mock import patch
 
 
@@ -262,3 +262,75 @@ class ModifierTests(TestCase):
         resp = self.client.post("/api/menu/modifier-groups/", {"name": "Size", "min_select": 1, "max_select": 1},
             content_type="application/json", HTTP_HOST=self.host)
         self.assertEqual(resp.status_code, 403)
+
+class CartValidationTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(slug="cart-tenant", name="Cart Tenant")
+        self.host = "cart-tenant.localhost"
+        token = set_current_tenant(self.tenant)
+        set_tenant_guc(self.tenant.id)
+        category = MenuCategory.objects.create(tenant=self.tenant, name="Pizzas")
+        self.item = MenuItem.objects.create(tenant=self.tenant, category=category, name="Margherita", price="299.00")
+        self.unavailable_item = MenuItem.objects.create(
+            tenant=self.tenant, category=category, name="Sold Out", price="199.00", is_available=False)
+
+        self.size_group = ModifierGroup.objects.create(tenant=self.tenant, name="Size", min_select=1, max_select=1)
+        self.size_group.items.add(self.item)
+        self.large = Modifier.objects.create(tenant=self.tenant, group=self.size_group, name="Large", price_delta="50.00")
+
+        self.unlinked_group = ModifierGroup.objects.create(tenant=self.tenant, name="Toppings", min_select=0, max_select=3)
+        self.unlinked_modifier = Modifier.objects.create(tenant=self.tenant, group=self.unlinked_group, name="Olives", price_delta="20.00")
+        reset_current_tenant(token)
+        set_tenant_guc(None)
+
+    def test_no_auth_required(self):
+        resp = self.client.post("/api/menu/cart/validate/",
+            {"items": [{"menu_item_id": str(self.item.id), "quantity": 1, "modifier_ids": [str(self.large.id)]}]},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+
+    def test_price_computed_correctly_and_ignores_client_tampering(self):
+        resp = self.client.post("/api/menu/cart/validate/",
+            {"items": [{
+                "menu_item_id": str(self.item.id), "quantity": 2,
+                "modifier_ids": [str(self.large.id)],
+                "price": "0.01",  # client-supplied garbage - server must ignore this entirely
+            }]},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(body["items"][0]["unit_price"], "349.00")  # 299 + 50
+        self.assertEqual(body["items"][0]["line_total"], "698.00")  # 349 * 2
+        self.assertEqual(body["subtotal"], "698.00")
+
+    def test_unavailable_item_rejected(self):
+        resp = self.client.post("/api/menu/cart/validate/",
+            {"items": [{"menu_item_id": str(self.unavailable_item.id), "quantity": 1, "modifier_ids": []}]},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 400)
+
+    def test_unlinked_modifier_rejected(self):
+        resp = self.client.post("/api/menu/cart/validate/",
+            {"items": [{"menu_item_id": str(self.item.id), "quantity": 1, "modifier_ids": [str(self.unlinked_modifier.id)]}]},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 400)
+
+    def test_missing_required_selection_rejected(self):
+        resp = self.client.post("/api/menu/cart/validate/",
+            {"items": [{"menu_item_id": str(self.item.id), "quantity": 1, "modifier_ids": []}]},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 400)  # Size group requires exactly 1, got 0
+
+    def test_cross_tenant_item_id_rejected(self):
+        other_tenant = Tenant.objects.create(slug="other-cart-tenant", name="Other")
+        token = set_current_tenant(other_tenant)
+        set_tenant_guc(other_tenant.id)
+        other_category = MenuCategory.objects.create(tenant=other_tenant, name="Other Cat")
+        other_item = MenuItem.objects.create(tenant=other_tenant, category=other_category, name="Other Item", price="99.00")
+        reset_current_tenant(token)
+        set_tenant_guc(None)
+
+        resp = self.client.post("/api/menu/cart/validate/",
+            {"items": [{"menu_item_id": str(other_item.id), "quantity": 1, "modifier_ids": []}]},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 400)  # tenant-scoped manager -> DoesNotExist from this tenant's context
