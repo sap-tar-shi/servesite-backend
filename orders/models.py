@@ -5,13 +5,13 @@ from tables.models import Table
 
 
 TRANSITIONS = {
-    "placed": {"accepted", "cancelled"},
+    "placed": {"accepted", "cancelled", "paid"},  # paid added: prepaid flow pays before prep starts
     "accepted": {"preparing", "cancelled"},
     "preparing": {"ready", "cancelled"},
     "ready": {"served", "handed_over", "cancelled"},
     "served": {"completed", "paid"},
     "handed_over": {"completed", "paid"},
-    "paid": {"completed", "refunded"},
+    "paid": {"accepted", "completed", "refunded"},  # paid can continue toward accepted, or straight to completed
     "completed": {"refunded"},
     "cancelled": set(),
     "refunded": set(),

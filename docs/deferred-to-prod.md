@@ -36,3 +36,24 @@ Plan for when `platform.com` is registered:
 
 AC ("`{slug}.platform.com` serves the correct tenant's site") is proven
 today via the `.localhost` equivalent; re-verify once real DNS/TLS is live.
+
+
+## P2-T9 — Live webhook delivery verification
+
+Deferred to production deployment. Razorpay's dashboard rejects
+`localhost` webhook URLs outright, and ngrok isn't available in the
+current dev environment (office laptop restrictions).
+
+Current state:
+- Signature verification and idempotency logic are fully covered by
+  automated tests (payments/tests.py::PaymentFlowTests) using a synthetic
+  signed payload - the code path is proven correct.
+- NOT yet verified: the actual field names/nesting Razorpay sends in a
+  real payment.captured/payment.failed webhook. The assumed shape
+  (payload.event, payload.payload.payment.entity.order_id, payload.id for
+  event_id) is written from general knowledge, not a live delivery.
+- webhook_secret is currently a placeholder, not a real Razorpay-issued one.
+
+Before going live: deploy publicly reachable, set up a real Test Mode
+webhook in Razorpay's dashboard, trigger a real test payment, confirm the
+payload matches what PaymentWebhookView expects, adjust if not.

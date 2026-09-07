@@ -1,4 +1,7 @@
 import secrets
+import json
+import hmac
+import hashlib
 import requests
 from datetime import timedelta
 from django.utils import timezone
@@ -11,7 +14,8 @@ from accounts.permissions import HasModulePermission
 from tenants.models import Tenant
 from tenants.context import set_current_tenant, reset_current_tenant
 from core.db import set_tenant_guc
-from .models import RazorpayConnection, RazorpayConnectAttempt
+from orders.models import Order
+from .models import RazorpayConnection, RazorpayConnectAttempt, Payment, WebhookEvent
 
 
 class RazorpayConnectStartView(APIView):
@@ -108,3 +112,103 @@ class PaymentStatusView(APIView):
 
     def get(self, request):
         return Response({"online_payment_enabled": request.tenant.online_payment_enabled})
+
+
+class PaymentCreateView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        order_id = request.data.get("order_id")
+        try:
+            order = Order.objects.get(id=order_id, payment_mode="pay_now")
+        except Order.DoesNotExist:
+            return Response({"detail": "Order not found or not a pay-now order."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if hasattr(order, "payment"):
+            existing = order.payment
+            return Response({"razorpay_order_id": existing.razorpay_order_id, "amount": str(existing.amount)})
+
+        connection = RazorpayConnection.objects.filter(tenant=request.tenant, is_active=True).first()
+        if not connection:
+            return Response({"detail": "Online payment not available for this restaurant."}, status=status.HTTP_400_BAD_REQUEST)
+
+        resp = requests.post(
+            "https://api.razorpay.com/v1/orders",
+            json={"amount": int(order.subtotal * 100), "currency": "INR", "receipt": str(order.id)},
+            headers=connection.get_auth_header(),
+            timeout=10,
+        )
+        if not resp.ok:
+            return Response({"detail": "Could not create Razorpay order."}, status=status.HTTP_502_BAD_GATEWAY)
+
+        data = resp.json()
+        payment = Payment.objects.create(
+            tenant=request.tenant, order=order, razorpay_order_id=data["id"], amount=order.subtotal,
+        )
+        return Response({
+            "razorpay_order_id": payment.razorpay_order_id,
+            "razorpay_key_id": connection.get_access_token() if connection.auth_mode == "direct_keys" else None,
+            "amount": data["amount"],
+            "currency": data.get("currency", "INR"),
+        })
+
+
+class PaymentWebhookView(APIView):
+    """
+    NOT YET VERIFIED against a real Razorpay-delivered payload - see
+    docs/deferred-to-prod.md. Razorpay's dashboard refuses localhost
+    webhook URLs outright, and ngrok isn't available in this dev
+    environment, so this is currently only proven against synthetic
+    signed payloads in payments/tests.py, not a live delivery.
+    """
+
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        try:
+            payload = json.loads(request.body)
+        except (json.JSONDecodeError, TypeError):
+            return Response({"detail": "Invalid JSON."}, status=status.HTTP_400_BAD_REQUEST)
+
+        event_type = payload.get("event", "")
+        entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
+        razorpay_order_id = entity.get("order_id")
+        if not razorpay_order_id:
+            return Response({"detail": "Missing order_id in payload."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            payment = Payment.unscoped.select_related("tenant", "order").get(razorpay_order_id=razorpay_order_id)
+        except Payment.DoesNotExist:
+            return Response({"detail": "Unknown razorpay_order_id."}, status=status.HTTP_400_BAD_REQUEST)
+
+        tenant = payment.tenant
+        connection = RazorpayConnection.unscoped.get(tenant=tenant)
+
+        signature = request.headers.get("X-Razorpay-Signature", "")
+        expected = hmac.new(connection.webhook_secret.encode(), request.body, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(expected, signature):
+            return Response({"detail": "Invalid signature."}, status=status.HTTP_400_BAD_REQUEST)
+
+        event_id = payload.get("id") or f"{razorpay_order_id}:{event_type}"
+
+        token = set_current_tenant(tenant)
+        set_tenant_guc(tenant.id)
+        try:
+            if WebhookEvent.objects.filter(event_id=event_id).exists():
+                return Response({"detail": "Already processed."}, status=status.HTTP_200_OK)
+            WebhookEvent.objects.create(tenant=tenant, event_id=event_id, event_type=event_type)
+
+            if event_type == "payment.captured" and payment.status != "captured":
+                payment.status = "captured"
+                payment.razorpay_payment_id = entity.get("id", "")
+                payment.save(update_fields=["status", "razorpay_payment_id"])
+                if payment.order.status == "placed":
+                    payment.order.transition_to("paid", actor=None)
+            elif event_type == "payment.failed":
+                payment.status = "failed"
+                payment.save(update_fields=["status"])
+        finally:
+            reset_current_tenant(token)
+            set_tenant_guc(None)
+
+        return Response({"detail": "ok"}, status=status.HTTP_200_OK)

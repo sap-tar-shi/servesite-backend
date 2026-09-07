@@ -51,9 +51,10 @@ class OrderCreateView(APIView):
             return Response({"detail": "payment_mode must be 'pay_now' or 'pay_at_counter'."}, status=status.HTTP_400_BAD_REQUEST)
         if payment_mode == "pay_now" and not request.tenant.online_payment_enabled:
             return Response({"detail": "Pay now is not available for this restaurant."}, status=status.HTTP_400_BAD_REQUEST)
-                    
+
         order = Order.objects.create(
-            tenant=request.tenant, subtotal=subtotal, order_type=order_type, table=table, address=address,
+            tenant=request.tenant, subtotal=subtotal, order_type=order_type, table=table,
+            address=address, payment_mode=payment_mode,
         )
         OrderEvent.objects.create(tenant=request.tenant, order=order, from_status="", to_status="placed", actor=None)
 
