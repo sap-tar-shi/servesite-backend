@@ -1,8 +1,8 @@
 from rest_framework import generics, permissions
 from accounts.permissions import HasModulePermission
 from .tasks import revalidate_public_menu
-from .models import MenuCategory, MenuItem
-from .serializers import MenuCategorySerializer, MenuItemSerializer, PublicMenuCategorySerializer
+from .models import MenuCategory, MenuItem, ModifierGroup, Modifier
+from .serializers import MenuCategorySerializer, MenuItemSerializer, PublicMenuCategorySerializer, ModifierGroupSerializer, ModifierSerializer
 
 
 class MenuCategoryListCreateView(generics.ListCreateAPIView):
@@ -79,3 +79,45 @@ class PublicMenuView(generics.ListAPIView):
 
     def get_queryset(self):
         return MenuCategory.objects.filter(visible=True).prefetch_related("items")
+
+
+class ModifierGroupListCreateView(generics.ListCreateAPIView):
+    serializer_class = ModifierGroupSerializer
+    permission_classes = [HasModulePermission("menu_management")]
+
+    def get_queryset(self):
+        return ModifierGroup.objects.prefetch_related("modifiers", "items").all()
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.request.tenant)
+
+
+class ModifierGroupDetailView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = ModifierGroupSerializer
+    permission_classes = [HasModulePermission("menu_management")]
+
+    def get_queryset(self):
+        return ModifierGroup.objects.prefetch_related("modifiers", "items").all()
+
+
+class ModifierListCreateView(generics.ListCreateAPIView):
+    serializer_class = ModifierSerializer
+    permission_classes = [HasModulePermission("menu_management")]
+
+    def get_queryset(self):
+        qs = Modifier.objects.all()
+        group_id = self.request.query_params.get("group")
+        if group_id:
+            qs = qs.filter(group_id=group_id)
+        return qs
+
+    def perform_create(self, serializer):
+        serializer.save(tenant=self.request.tenant)
+
+
+class ModifierDetailView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = ModifierSerializer
+    permission_classes = [HasModulePermission("menu_management")]
+
+    def get_queryset(self):
+        return Modifier.objects.all()

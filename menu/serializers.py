@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import MenuCategory, MenuItem
+from .models import MenuCategory, MenuItem, ModifierGroup, Modifier
 
 
 class MenuItemSerializer(serializers.ModelSerializer):
@@ -46,3 +46,26 @@ class PublicMenuCategorySerializer(serializers.ModelSerializer):
     class Meta:
         model = MenuCategory
         fields = ["name", "items"]
+
+
+class ModifierSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Modifier
+        fields = ["id", "group", "name", "price_delta", "created_at"]
+        read_only_fields = ["id", "created_at"]
+
+
+class ModifierGroupSerializer(serializers.ModelSerializer):
+    modifiers = ModifierSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = ModifierGroup
+        fields = ["id", "name", "min_select", "max_select", "items", "modifiers", "created_at"]
+        read_only_fields = ["id", "created_at"]
+
+    def validate(self, data):
+        min_select = data.get("min_select", getattr(self.instance, "min_select", 0))
+        max_select = data.get("max_select", getattr(self.instance, "max_select", 1))
+        if min_select > max_select:
+            raise serializers.ValidationError("min_select cannot be greater than max_select.")
+        return data

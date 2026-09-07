@@ -216,3 +216,49 @@ class MenuRevalidationTests(TestCase):
             content_type="application/json", HTTP_HOST=self.host)
         self.assertEqual(resp.status_code, 200)
         mock_task.assert_called_once_with("revalidate-tenant")
+
+class ModifierTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(slug="modifier-tenant", name="Modifier Tenant")
+        self.host = "modifier-tenant.localhost"
+        self.owner = User.objects.create_user(email="owner@modifier.com", password="testpass123")
+        Membership.objects.create(user=self.owner, tenant=self.tenant, role=Membership.ROLE_OWNER)
+        self.staff = User.objects.create_user(email="staff@modifier.com", password="testpass123")
+        Membership.objects.create(user=self.staff, tenant=self.tenant, role=Membership.ROLE_STAFF)
+
+        token = set_current_tenant(self.tenant)
+        set_tenant_guc(self.tenant.id)
+        category = MenuCategory.objects.create(tenant=self.tenant, name="Pizzas")
+        self.item = MenuItem.objects.create(tenant=self.tenant, category=category, name="Margherita", price="299.00")
+        reset_current_tenant(token)
+        set_tenant_guc(None)
+
+    def _login(self, email):
+        return self.client.post("/api/auth/login/", {"email": email, "password": "testpass123"},
+            content_type="application/json", HTTP_HOST=self.host)
+
+    def test_owner_can_create_modifier_group_and_link_item(self):
+        self._login("owner@modifier.com")
+        resp = self.client.post("/api/menu/modifier-groups/",
+            {"name": "Size", "min_select": 1, "max_select": 1, "items": [str(self.item.id)]},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 201)
+        group_id = resp.json()["id"]
+
+        resp = self.client.post("/api/menu/modifiers/",
+            {"group": group_id, "name": "Large", "price_delta": "50.00"},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 201)
+
+    def test_min_greater_than_max_rejected(self):
+        self._login("owner@modifier.com")
+        resp = self.client.post("/api/menu/modifier-groups/",
+            {"name": "Bad Group", "min_select": 3, "max_select": 1},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 400)
+
+    def test_staff_cannot_create_modifier_group(self):
+        self._login("staff@modifier.com")
+        resp = self.client.post("/api/menu/modifier-groups/", {"name": "Size", "min_select": 1, "max_select": 1},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 403)
