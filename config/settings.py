@@ -34,6 +34,10 @@ ALLOWED_HOSTS = env_config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=
 
 ENVIRONMENT = env_config("ENVIRONMENT", default="local")  # local | staging | prod
 
+REVALIDATE_SECRET = env_config("REVALIDATE_SECRET", default="")
+
+NEXT_APP_URL = env_config("NEXT_APP_URL", default="http://localhost:3000")
+
 
 # Application definition
 

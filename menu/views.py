@@ -1,5 +1,6 @@
 from rest_framework import generics, permissions
 from accounts.permissions import HasModulePermission
+from .tasks import revalidate_public_menu
 from .models import MenuCategory, MenuItem
 from .serializers import MenuCategorySerializer, MenuItemSerializer, PublicMenuCategorySerializer
 
@@ -13,6 +14,7 @@ class MenuCategoryListCreateView(generics.ListCreateAPIView):
 
     def perform_create(self, serializer):
         serializer.save(tenant=self.request.tenant)
+        revalidate_public_menu.delay(self.request.tenant.slug)
 
 
 class MenuCategoryDetailView(generics.RetrieveUpdateDestroyAPIView):
@@ -21,6 +23,15 @@ class MenuCategoryDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         return MenuCategory.objects.all()
+    
+    def perform_update(self, serializer):
+        serializer.save()
+        revalidate_public_menu.delay(self.request.tenant.slug)
+
+    def perform_destroy(self, instance):
+        tenant_slug = self.request.tenant.slug
+        instance.delete()
+        revalidate_public_menu.delay(tenant_slug)
 
 
 class MenuItemListCreateView(generics.ListCreateAPIView):
@@ -44,6 +55,15 @@ class MenuItemDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         return MenuItem.objects.all()
+
+    def perform_update(self, serializer):
+        serializer.save()
+        revalidate_public_menu.delay(self.request.tenant.slug)
+
+    def perform_destroy(self, instance):
+        tenant_slug = self.request.tenant.slug
+        instance.delete()
+        revalidate_public_menu.delay(tenant_slug)
 
 
 class PublicMenuView(generics.ListAPIView):

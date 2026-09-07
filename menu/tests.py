@@ -5,6 +5,7 @@ from core.db import set_tenant_guc
 from core.isolation_testing import TwoTenantIsolationTestCase
 from accounts.models import User, Membership
 from .models import MenuCategory, MenuItem
+from unittest.mock import patch
 
 
 class MenuIsolationTests(TwoTenantIsolationTestCase):
@@ -180,3 +181,38 @@ class PublicMenuViewTests(TestCase):
         items = resp.json()[0]["items"]
         sold_out = next(i for i in items if i["name"] == "Sold Out Item")
         self.assertFalse(sold_out["is_available"])
+
+
+class MenuRevalidationTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(slug="revalidate-tenant", name="Revalidate Tenant")
+        self.host = "revalidate-tenant.localhost"
+        self.owner = User.objects.create_user(email="owner@revalidate.com", password="testpass123")
+        Membership.objects.create(user=self.owner, tenant=self.tenant, role=Membership.ROLE_OWNER)
+        self.client.post("/api/auth/login/", {"email": "owner@revalidate.com", "password": "testpass123"},
+            content_type="application/json", HTTP_HOST=self.host)
+
+    @patch("menu.views.revalidate_public_menu.delay")
+    def test_category_create_triggers_revalidation(self, mock_task):
+        resp = self.client.post("/api/menu/categories/", {"name": "Mains"},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 201)
+        mock_task.assert_called_once_with("revalidate-tenant")
+
+    @patch("menu.views.revalidate_public_menu.delay")
+    def test_item_availability_toggle_triggers_revalidation(self, mock_task):
+        cat_resp = self.client.post("/api/menu/categories/", {"name": "Mains"},
+            content_type="application/json", HTTP_HOST=self.host)
+        category_id = cat_resp.json()["id"]
+        mock_task.reset_mock()
+
+        item_resp = self.client.post("/api/menu/items/",
+            {"category": category_id, "name": "Soup", "price": "99.00"},
+            content_type="application/json", HTTP_HOST=self.host)
+        item_id = item_resp.json()["id"]
+        mock_task.reset_mock()
+
+        resp = self.client.patch(f"/api/menu/items/{item_id}/", {"is_available": False},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+        mock_task.assert_called_once_with("revalidate-tenant")
