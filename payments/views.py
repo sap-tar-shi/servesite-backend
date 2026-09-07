@@ -15,6 +15,7 @@ from tenants.models import Tenant
 from tenants.context import set_current_tenant, reset_current_tenant
 from core.db import set_tenant_guc
 from orders.models import Order
+from orders.serializers import OrderSerializer
 from .models import RazorpayConnection, RazorpayConnectAttempt, Payment, WebhookEvent
 
 
@@ -212,3 +213,45 @@ class PaymentWebhookView(APIView):
             set_tenant_guc(None)
 
         return Response({"detail": "ok"}, status=status.HTTP_200_OK)
+
+
+class RefundView(APIView):
+    """
+    POST /api/payments/refund/<order_id>/  - owner/manager only. Issues
+    the refund on the RESTAURANT's own Razorpay account (never the
+    platform's), per §9's "platform never holds/splits funds" guardrail -
+    same auth_header mechanism as PaymentCreateView.
+    """
+
+    permission_classes = [HasModulePermission("billing_staff_domains")]
+
+    def post(self, request, order_id):
+        try:
+            order = Order.objects.get(id=order_id)
+        except Order.DoesNotExist:
+            return Response({"detail": "Order not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not hasattr(order, "payment") or order.payment.status != "captured":
+            return Response({"detail": "Order has no captured payment to refund."}, status=status.HTTP_400_BAD_REQUEST)
+
+        connection = RazorpayConnection.objects.filter(tenant=request.tenant, is_active=True).first()
+        if not connection:
+            return Response({"detail": "Payment connection not found."}, status=status.HTTP_400_BAD_REQUEST)
+
+        resp = requests.post(
+            f"https://api.razorpay.com/v1/payments/{order.payment.razorpay_payment_id}/refund",
+            json={},  # full refund; partial refunds (amount=...) are a future extension, not needed by this AC
+            headers=connection.get_auth_header(),
+            timeout=10,
+        )
+        if not resp.ok:
+            return Response({"detail": "Refund request failed at Razorpay."}, status=status.HTTP_502_BAD_GATEWAY)
+
+        order.payment.status = "failed"  # reusing existing choices; consider adding a dedicated "refunded" Payment status later if this matters for reporting
+        order.payment.save(update_fields=["status"])
+        try:
+            order.transition_to("refunded", actor=request.user)
+        except ValueError as e:
+            return Response({"detail": f"Refund issued at Razorpay, but order state update failed: {e}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response(OrderSerializer(order).data)

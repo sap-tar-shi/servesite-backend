@@ -1,10 +1,11 @@
 from django.urls import path
-from .views import RazorpayConnectStartView, RazorpayConnectCallbackView, PaymentStatusView, PaymentCreateView
+from .views import RazorpayConnectStartView, RazorpayConnectCallbackView, PaymentStatusView, PaymentCreateView, RefundView
 
 urlpatterns = [
     path("razorpay/connect/", RazorpayConnectStartView.as_view(), name="razorpay-connect-start"),
     path("status/", PaymentStatusView.as_view(), name="payment-status"),    
     path("create/", PaymentCreateView.as_view(), name="payment-create"),
+    path("refund/<uuid:order_id>/", RefundView.as_view(), name="payment-refund"),
 ]
 
 # Registered separately in config/urls.py at a fixed, non-tenant path -
