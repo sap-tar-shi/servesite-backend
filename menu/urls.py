@@ -1,7 +1,7 @@
 from django.urls import path
 from .views import (
     MenuCategoryListCreateView, MenuCategoryDetailView,
-    MenuItemListCreateView, MenuItemDetailView,
+    MenuItemListCreateView, MenuItemDetailView, PublicMenuView,
 )
 
 urlpatterns = [
@@ -9,4 +9,5 @@ urlpatterns = [
     path("categories/<uuid:pk>/", MenuCategoryDetailView.as_view(), name="menu-category-detail"),
     path("items/", MenuItemListCreateView.as_view(), name="menu-item-list-create"),
     path("items/<uuid:pk>/", MenuItemDetailView.as_view(), name="menu-item-detail"),
+    path("public/", PublicMenuView.as_view(), name="menu-public"),
 ]

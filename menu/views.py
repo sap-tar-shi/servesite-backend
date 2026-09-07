@@ -1,7 +1,7 @@
-from rest_framework import generics
+from rest_framework import generics, permissions
 from accounts.permissions import HasModulePermission
 from .models import MenuCategory, MenuItem
-from .serializers import MenuCategorySerializer, MenuItemSerializer
+from .serializers import MenuCategorySerializer, MenuItemSerializer, PublicMenuCategorySerializer
 
 
 class MenuCategoryListCreateView(generics.ListCreateAPIView):
@@ -44,3 +44,18 @@ class MenuItemDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def get_queryset(self):
         return MenuItem.objects.all()
+
+
+class PublicMenuView(generics.ListAPIView):
+    """
+    GET /api/menu/public/  - no auth required (diners aren't logged in).
+    Returns only visible categories, per P1-T19/T20 AC. Unavailable items
+    are still included (template dims them per design, doesn't hide them) -
+    only category.visible=False is excluded entirely.
+    """
+
+    serializer_class = PublicMenuCategorySerializer
+    permission_classes = [permissions.AllowAny]
+
+    def get_queryset(self):
+        return MenuCategory.objects.filter(visible=True).prefetch_related("items")

@@ -150,3 +150,33 @@ class MenuCRUDTests(TestCase):
         resp = self.client.post("/api/menu/categories/", {"name": "Mains"},
             content_type="application/json", HTTP_HOST=self.host)
         self.assertEqual(resp.status_code, 400)
+
+
+class PublicMenuViewTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(slug="public-menu-tenant", name="Public Menu Tenant")
+        self.host = "public-menu-tenant.localhost"
+        token = set_current_tenant(self.tenant)
+        set_tenant_guc(self.tenant.id)
+        visible_cat = MenuCategory.objects.create(tenant=self.tenant, name="Mains", visible=True)
+        MenuItem.objects.create(tenant=self.tenant, category=visible_cat, name="Pizza", price="199.00", is_available=True)
+        MenuItem.objects.create(tenant=self.tenant, category=visible_cat, name="Sold Out Item", price="99.00", is_available=False)
+        MenuCategory.objects.create(tenant=self.tenant, name="Hidden Seasonal", visible=False)
+        reset_current_tenant(token)
+        set_tenant_guc(None)
+
+    def test_public_endpoint_requires_no_auth(self):
+        resp = self.client.get("/api/menu/public/", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+
+    def test_hidden_category_excluded(self):
+        resp = self.client.get("/api/menu/public/", HTTP_HOST=self.host)
+        names = [c["name"] for c in resp.json()]
+        self.assertIn("Mains", names)
+        self.assertNotIn("Hidden Seasonal", names)
+
+    def test_unavailable_item_still_included_but_flagged(self):
+        resp = self.client.get("/api/menu/public/", HTTP_HOST=self.host)
+        items = resp.json()[0]["items"]
+        sold_out = next(i for i in items if i["name"] == "Sold Out Item")
+        self.assertFalse(sold_out["is_available"])

@@ -33,3 +33,16 @@ class MenuCategorySerializer(serializers.ModelSerializer):
         if qs.exists():
             raise serializers.ValidationError("A category with this name already exists.")
         return value
+
+class PublicMenuItemSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MenuItem
+        fields = ["name", "description", "price", "is_available"]
+
+
+class PublicMenuCategorySerializer(serializers.ModelSerializer):
+    items = PublicMenuItemSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = MenuCategory
+        fields = ["name", "items"]
