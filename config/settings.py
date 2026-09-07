@@ -48,6 +48,7 @@ INSTALLED_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "corsheaders",
     "rest_framework",
     "storages",
     "tenants",
@@ -60,6 +61,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
     "tenants.middleware.TenantContextMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
@@ -213,6 +215,12 @@ if AWS_STORAGE_BUCKET_NAME:
 SESSION_COOKIE_DOMAIN = env_config("SESSION_COOKIE_DOMAIN", default=None)
 SESSION_COOKIE_SAMESITE = "Lax"
 CSRF_COOKIE_DOMAIN = env_config("SESSION_COOKIE_DOMAIN", default=None)
+
+
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^http://[\w-]+\.localhost:3000$",
+]
+CORS_ALLOW_CREDENTIALS = True
 
 
 REST_FRAMEWORK = {
