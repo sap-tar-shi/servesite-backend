@@ -58,7 +58,8 @@ INSTALLED_APPS = [
     "cms",
     "menu",
     "tables",
-    "orders"
+    "orders",
+    "payments"
 ]
 
 MIDDLEWARE = [
@@ -238,3 +239,9 @@ REST_FRAMEWORK = {
         "rest_framework.renderers.BrowsableAPIRenderer",
     ],
 }
+
+
+RAZORPAY_CLIENT_ID = env_config("RAZORPAY_CLIENT_ID", default="")
+RAZORPAY_CLIENT_SECRET = env_config("RAZORPAY_CLIENT_SECRET", default="")
+RAZORPAY_TOKEN_ENCRYPTION_KEY = env_config("RAZORPAY_TOKEN_ENCRYPTION_KEY", default="")
+RAZORPAY_REDIRECT_URI = env_config("RAZORPAY_REDIRECT_URI", default="http://localhost:8000/api/payments/razorpay/callback/")

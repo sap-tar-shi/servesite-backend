@@ -17,6 +17,7 @@ Including another URLconf
 
 from django.contrib import admin
 from django.urls import path, include
+from payments.views import RazorpayConnectCallbackView
 
 urlpatterns = [
     path("admin/", admin.site.urls),
@@ -26,4 +27,6 @@ urlpatterns = [
     path("api/menu/", include("menu.urls")),
     path("api/tables/", include("tables.urls")),
     path("api/orders/", include("orders.urls")),
+    path("api/payments/", include("payments.urls")),
+    path("api/payments/razorpay/callback/", RazorpayConnectCallbackView.as_view(), name="razorpay-callback"),
 ]
