@@ -6,6 +6,8 @@ from menu.models import MenuCategory, MenuItem
 from accounts.models import User, Membership
 from .models import Order, OrderItem, OrderEvent
 from tables.models import Table
+from django.utils import timezone
+from django.core.cache import cache
 
 
 class OrderSnapshotTests(TestCase):
@@ -258,3 +260,72 @@ class PaymentModeTests(TestCase):
         self.assertFalse(resp.json()["online_payment_enabled"])
         resp = self.client.get("/api/payments/status/", HTTP_HOST=self.connected_host)
         self.assertTrue(resp.json()["online_payment_enabled"])
+
+
+class LiveOrdersTests(TestCase):
+    def setUp(self):
+        cache.clear()  # avoid cross-test cache pollution given the 2s cache window
+        self.tenant = Tenant.objects.create(slug="live-tenant", name="Live Tenant")
+        self.host = "live-tenant.localhost"
+        self.kitchen = User.objects.create_user(email="kitchen@live.com", password="testpass123")
+        Membership.objects.create(user=self.kitchen, tenant=self.tenant, role=Membership.ROLE_KITCHEN)
+        self.staff = User.objects.create_user(email="waiter@live.com", password="testpass123")
+        Membership.objects.create(user=self.staff, tenant=self.tenant, role=Membership.ROLE_WAITER)
+
+        token = set_current_tenant(self.tenant)
+        set_tenant_guc(self.tenant.id)
+        category = MenuCategory.objects.create(tenant=self.tenant, name="Mains")
+        self.item = MenuItem.objects.create(tenant=self.tenant, category=category, name="Burger", price="199.00")
+        reset_current_tenant(token)
+        set_tenant_guc(None)
+
+        self.client.post("/api/auth/login/", {"email": "kitchen@live.com", "password": "testpass123"},
+            content_type="application/json", HTTP_HOST=self.host)
+
+    def test_returns_only_orders_changed_since_cursor(self):
+        cutoff = timezone.now()
+        self.client.post("/api/orders/",
+            {"items": [{"menu_item_id": str(self.item.id), "quantity": 1, "modifier_ids": []}],
+             "order_type": "takeaway", "payment_mode": "pay_at_counter"},
+            content_type="application/json", HTTP_HOST=self.host)
+
+        resp = self.client.get("/api/orders/live/", {"since": cutoff.isoformat()}, HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(len(resp.json()), 1)
+
+    def test_orders_before_cursor_excluded(self):
+        self.client.post("/api/orders/",
+            {"items": [{"menu_item_id": str(self.item.id), "quantity": 1, "modifier_ids": []}],
+             "order_type": "takeaway", "payment_mode": "pay_at_counter"},
+            content_type="application/json", HTTP_HOST=self.host)
+
+        cutoff_after = timezone.now()
+        resp = self.client.get("/api/orders/live/", {"since": cutoff_after.isoformat()}, HTTP_HOST=self.host)
+        self.assertEqual(resp.json(), [])
+
+    def test_status_transition_updates_the_cursor(self):
+        create_resp = self.client.post("/api/orders/",
+            {"items": [{"menu_item_id": str(self.item.id), "quantity": 1, "modifier_ids": []}],
+             "order_type": "takeaway", "payment_mode": "pay_at_counter"},
+            content_type="application/json", HTTP_HOST=self.host)
+        order_id = create_resp.json()["id"]
+
+        cutoff = timezone.now()
+        cache.clear()
+        self.client.post(f"/api/orders/{order_id}/transition/", {"to_status": "accepted"},
+            content_type="application/json", HTTP_HOST=self.host)
+
+        resp = self.client.get("/api/orders/live/", {"since": cutoff.isoformat()}, HTTP_HOST=self.host)
+        self.assertEqual(len(resp.json()), 1)
+        self.assertEqual(resp.json()[0]["status"], "accepted")
+
+    def test_waiter_role_can_also_access(self):
+        self.client.logout()
+        self.client.post("/api/auth/login/", {"email": "waiter@live.com", "password": "testpass123"},
+            content_type="application/json", HTTP_HOST=self.host)
+        resp = self.client.get("/api/orders/live/", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+
+    def test_invalid_since_param_rejected(self):
+        resp = self.client.get("/api/orders/live/?since=not-a-date", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 400)

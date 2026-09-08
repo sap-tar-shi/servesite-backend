@@ -6,6 +6,9 @@ from .models import Order, OrderItem, OrderEvent
 from .serializers import OrderSerializer
 from tables.models import Table
 from accounts.permissions import HasModulePermission
+from django.core.cache import cache
+from django.utils.dateparse import parse_datetime
+from django.utils import timezone
 
 
 class OrderCreateView(APIView):
@@ -96,3 +99,34 @@ class OrderTransitionView(APIView):
         except ValueError as e:
             return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(OrderSerializer(order).data)
+
+
+class LiveOrdersView(APIView):
+    """
+    GET /api/orders/live/?since=<ISO8601 timestamp>
+    Per P2-T11 AC: returns only orders changed since the cursor, backed by
+    the (tenant, updated_at) index. Cached for a short window (2s) since
+    KDS/waiter clients poll every 3-5s and frequently overlap on the same
+    (tenant, since) pair - this avoids re-hitting the DB for every client's
+    near-identical poll.
+    """
+
+    permission_classes = [HasModulePermission("live_orders")]
+
+    def get(self, request):
+        since_param = request.query_params.get("since")
+        since = parse_datetime(since_param) if since_param else None
+        if since_param and since is None:
+            return Response({"detail": "Invalid 'since' timestamp - use ISO 8601."}, status=status.HTTP_400_BAD_REQUEST)
+        if since is None:
+            since = timezone.now() - timezone.timedelta(hours=24)  # sane default: don't return all-time history on first poll
+
+        cache_key = f"live_orders:{request.tenant.id}:{since.isoformat()}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return Response(cached)
+
+        orders = Order.objects.filter(updated_at__gt=since).prefetch_related("items").order_by("updated_at")
+        data = OrderSerializer(orders, many=True).data
+        cache.set(cache_key, data, timeout=2)
+        return Response(data)

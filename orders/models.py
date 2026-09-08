@@ -32,6 +32,7 @@ class Order(TenantScopedModel):
     table = models.ForeignKey(Table, on_delete=models.SET_NULL, null=True, blank=True, related_name="orders")
     address = models.CharField(max_length=500, blank=True, default="")
     subtotal = models.DecimalField(max_digits=10, decimal_places=2)
+    updated_at = models.DateTimeField(auto_now=True)
     payment_mode = models.CharField(
         max_length=20, choices=[("pay_now", "Pay Now"), ("pay_at_counter", "Pay at Counter")],
         null=True, blank=True,
@@ -39,6 +40,9 @@ class Order(TenantScopedModel):
 
     class Meta(TenantScopedModel.Meta):
         db_table = "orders_order"
+        indexes = TenantScopedModel.Meta.indexes + [
+            models.Index(fields=["tenant", "updated_at"]),
+        ]
 
     def __str__(self):
         return f"{self.tenant.slug}/order-{str(self.id)[:8]}"
@@ -54,7 +58,7 @@ class Order(TenantScopedModel):
 
         old_status = self.status
         self.status = new_status
-        self.save(update_fields=["status"])
+        self.save(update_fields=["status", "updated_at"])
         OrderEvent.objects.create(
             tenant=self.tenant, order=self, from_status=old_status, to_status=new_status, actor=actor,
         )
