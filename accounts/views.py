@@ -172,3 +172,45 @@ class InviteStaffView(APIView):
         if password_to_return:
             response_data["password"] = password_to_return
         return Response(response_data, status=status.HTTP_201_CREATED)
+
+
+def _get_shared_staff_membership(tenant):
+    """Shared helper - locates the auto-provisioned shared staff Membership for a tenant, if any."""
+    return Membership.objects.filter(
+        tenant=tenant, role=Membership.ROLE_STAFF, is_shared_account=True,
+    ).select_related("user").first()
+
+
+class StaffModeView(APIView):
+    """
+    Owner-only (billing_staff_domains). Per P2-T16 AC.
+    GET  -> current staff_account_mode.
+    POST {"mode": "shared"|"individual"} -> switches mode.
+      - individual: deactivates the shared login (User.is_active=False) so
+        it can no longer be used to log in going forward - staff must use
+        their individual accounts from this point on.
+      - shared: reactivates the shared login.
+    Switching NEVER touches existing OrderEvent rows - actor is an
+    immutable FK captured at write time, unaffected by any later toggle.
+    """
+
+    permission_classes = [HasModulePermission("billing_staff_domains")]
+
+    def get(self, request):
+        return Response({"staff_account_mode": request.tenant.staff_account_mode})
+
+    def post(self, request):
+        mode = request.data.get("mode")
+        valid_modes = {choice[0] for choice in request.tenant.STAFF_MODE_CHOICES}
+        if mode not in valid_modes:
+            return Response({"detail": f"'mode' must be one of {sorted(valid_modes)}."}, status=status.HTTP_400_BAD_REQUEST)
+
+        request.tenant.staff_account_mode = mode
+        request.tenant.save(update_fields=["staff_account_mode"])
+
+        shared_membership = _get_shared_staff_membership(request.tenant)
+        if shared_membership is not None:
+            shared_membership.user.is_active = (mode == request.tenant.STAFF_MODE_SHARED)
+            shared_membership.user.save(update_fields=["is_active"])
+
+        return Response({"staff_account_mode": request.tenant.staff_account_mode})

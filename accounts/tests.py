@@ -267,3 +267,95 @@ class IndividualStaffInviteTests(TestCase):
         self.assertEqual(event.actor.email, "kds2@invite.com")
         reset_current_tenant(token)
         set_tenant_guc(None)
+
+
+class StaffModeSwitchTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(slug="mode-switch-tenant", name="Mode Switch Tenant")
+        self.host = "mode-switch-tenant.localhost"
+        self.owner = User.objects.create_user(email="owner@modeswitch.com", password="testpass123")
+        Membership.objects.create(user=self.owner, tenant=self.tenant, role=Membership.ROLE_OWNER)
+        self.client.post("/api/auth/login/", {"email": "owner@modeswitch.com", "password": "testpass123"},
+            content_type="application/json", HTTP_HOST=self.host)
+
+    def test_default_mode_is_shared(self):
+        resp = self.client.get("/api/auth/staff-mode/", HTTP_HOST=self.host)
+        self.assertEqual(resp.json()["staff_account_mode"], "shared")
+
+    def test_switch_to_individual_deactivates_shared_login(self):
+        shared_membership = Membership.objects.get(tenant=self.tenant, role=Membership.ROLE_STAFF, is_shared_account=True)
+        resp = self.client.post("/api/auth/staff-mode/", {"mode": "individual"},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+        shared_membership.user.refresh_from_db()
+        self.assertFalse(shared_membership.user.is_active)
+
+    def test_switch_back_to_shared_reactivates_shared_login(self):
+        shared_membership = Membership.objects.get(tenant=self.tenant, role=Membership.ROLE_STAFF, is_shared_account=True)
+        self.client.post("/api/auth/staff-mode/", {"mode": "individual"},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.client.post("/api/auth/staff-mode/", {"mode": "shared"},
+            content_type="application/json", HTTP_HOST=self.host)
+        shared_membership.user.refresh_from_db()
+        self.assertTrue(shared_membership.user.is_active)
+
+    def test_invalid_mode_rejected(self):
+        resp = self.client.post("/api/auth/staff-mode/", {"mode": "bogus"},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 400)
+
+    def test_non_owner_cannot_switch_mode(self):
+        kitchen = User.objects.create_user(email="kitchen@modeswitch.com", password="testpass123")
+        Membership.objects.create(user=kitchen, tenant=self.tenant, role=Membership.ROLE_KITCHEN)
+        self.client.logout()
+        self.client.post("/api/auth/login/", {"email": "kitchen@modeswitch.com", "password": "testpass123"},
+            content_type="application/json", HTTP_HOST=self.host)
+        resp = self.client.post("/api/auth/staff-mode/", {"mode": "individual"},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_switching_mode_does_not_re_attribute_past_order_events(self):
+        from menu.models import MenuCategory, MenuItem
+        from tenants.context import set_current_tenant, reset_current_tenant
+        from core.db import set_tenant_guc
+        from orders.models import OrderEvent
+
+        shared_membership = Membership.objects.get(tenant=self.tenant, role=Membership.ROLE_STAFF, is_shared_account=True)
+
+        token = set_current_tenant(self.tenant)
+        set_tenant_guc(self.tenant.id)
+        category = MenuCategory.objects.create(tenant=self.tenant, name="Mains")
+        item = MenuItem.objects.create(tenant=self.tenant, category=category, name="Burger", price="199.00")
+        reset_current_tenant(token)
+        set_tenant_guc(None)
+
+        self.client.logout()
+        # log in AS the shared staff account while it's still active (shared mode)
+        # note: shared login's password is unknown by design (P2-T14) - so instead
+        # we log the event directly at the model layer, which is what the actor
+        # FK actually stores regardless of how the login happened.
+        order_resp = self.client.post("/api/orders/",
+            {"items": [{"menu_item_id": str(item.id), "quantity": 1, "modifier_ids": []}],
+             "order_type": "takeaway", "payment_mode": "pay_at_counter"},
+            content_type="application/json", HTTP_HOST=self.host)
+        order_id = order_resp.json()["id"]
+
+        token = set_current_tenant(self.tenant)
+        set_tenant_guc(self.tenant.id)
+        from orders.models import Order
+        order = Order.objects.get(id=order_id)
+        order.transition_to("accepted", actor=shared_membership.user)
+        reset_current_tenant(token)
+        set_tenant_guc(None)
+
+        self.client.post("/api/auth/login/", {"email": "owner@modeswitch.com", "password": "testpass123"},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.client.post("/api/auth/staff-mode/", {"mode": "individual"},
+            content_type="application/json", HTTP_HOST=self.host)
+
+        token = set_current_tenant(self.tenant)
+        set_tenant_guc(self.tenant.id)
+        event = OrderEvent.objects.filter(order_id=order_id, to_status="accepted").first()
+        self.assertEqual(event.actor_id, shared_membership.user.id)
+        reset_current_tenant(token)
+        set_tenant_guc(None)

@@ -2,7 +2,7 @@ from django.urls import path
 from .views import (
     LoginView, LogoutView, MeView, PricingView,
     SiteCustomizationView, LiveOrdersView, BillingView,
-    StaffCredentialsView, InviteStaffView,
+    StaffCredentialsView, InviteStaffView, StaffModeView,
 )
 
 urlpatterns = [
@@ -15,4 +15,5 @@ urlpatterns = [
     path("billing/", BillingView.as_view(), name="billing"),
     path("staff-credentials/", StaffCredentialsView.as_view(), name="staff-credentials"),
     path("staff/", InviteStaffView.as_view(), name="staff-invite"),
+    path("staff-mode/", StaffModeView.as_view(), name="staff-mode"),
 ]
