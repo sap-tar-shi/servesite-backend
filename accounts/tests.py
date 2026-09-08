@@ -186,3 +186,84 @@ class SharedStaffAccountTests(TestCase):
             content_type="application/json", HTTP_HOST=self.host)
         resp = self.client.get("/api/auth/staff-credentials/", HTTP_HOST=self.host)
         self.assertEqual(resp.status_code, 403)
+
+
+class IndividualStaffInviteTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(slug="invite-tenant", name="Invite Tenant")
+        self.host = "invite-tenant.localhost"
+        self.owner = User.objects.create_user(email="owner@invite.com", password="testpass123")
+        Membership.objects.create(user=self.owner, tenant=self.tenant, role=Membership.ROLE_OWNER)
+        self.client.post("/api/auth/login/", {"email": "owner@invite.com", "password": "testpass123"},
+            content_type="application/json", HTTP_HOST=self.host)
+
+    def test_invite_new_user_creates_membership_and_returns_password(self):
+        resp = self.client.post("/api/auth/staff/", {"email": "newstaff@invite.com"},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 201)
+        self.assertIn("password", resp.json())
+
+        membership = Membership.objects.get(tenant=self.tenant, user__email="newstaff@invite.com")
+        self.assertEqual(membership.role, Membership.ROLE_STAFF)
+        self.assertFalse(membership.is_shared_account)
+
+    def test_invite_existing_user_attaches_membership_without_password(self):
+        User.objects.create_user(email="existing@invite.com", password="whatever123")
+        resp = self.client.post("/api/auth/staff/", {"email": "existing@invite.com"},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 201)
+        self.assertNotIn("password", resp.json())
+
+    def test_duplicate_invite_rejected(self):
+        self.client.post("/api/auth/staff/", {"email": "dup@invite.com"},
+            content_type="application/json", HTTP_HOST=self.host)
+        resp = self.client.post("/api/auth/staff/", {"email": "dup@invite.com"},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 400)
+
+    def test_non_owner_cannot_invite(self):
+        kitchen = User.objects.create_user(email="kitchen@invite.com", password="testpass123")
+        Membership.objects.create(user=kitchen, tenant=self.tenant, role=Membership.ROLE_KITCHEN)
+        self.client.logout()
+        self.client.post("/api/auth/login/", {"email": "kitchen@invite.com", "password": "testpass123"},
+            content_type="application/json", HTTP_HOST=self.host)
+        resp = self.client.post("/api/auth/staff/", {"email": "x@invite.com"},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 403)
+
+    def test_invited_staff_order_event_actor_names_individual(self):
+        from menu.models import MenuCategory, MenuItem
+        from tenants.context import set_current_tenant, reset_current_tenant
+        from core.db import set_tenant_guc
+
+        self.client.post("/api/auth/staff/", {"email": "kds@invite.com"},
+            content_type="application/json", HTTP_HOST=self.host)
+        password_resp = self.client.post("/api/auth/staff/", {"email": "kds2@invite.com"},
+            content_type="application/json", HTTP_HOST=self.host).json()
+
+        token = set_current_tenant(self.tenant)
+        set_tenant_guc(self.tenant.id)
+        category = MenuCategory.objects.create(tenant=self.tenant, name="Mains")
+        item = MenuItem.objects.create(tenant=self.tenant, category=category, name="Burger", price="199.00")
+        reset_current_tenant(token)
+        set_tenant_guc(None)
+
+        self.client.logout()
+        self.client.post("/api/auth/login/", {"email": "kds2@invite.com", "password": password_resp["password"]},
+            content_type="application/json", HTTP_HOST=self.host)
+        order_resp = self.client.post("/api/orders/",
+            {"items": [{"menu_item_id": str(item.id), "quantity": 1, "modifier_ids": []}],
+             "order_type": "takeaway", "payment_mode": "pay_at_counter"},
+            content_type="application/json", HTTP_HOST=self.host)
+        order_id = order_resp.json()["id"]
+        resp = self.client.post(f"/api/orders/{order_id}/transition/", {"to_status": "accepted"},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+
+        token = set_current_tenant(self.tenant)
+        set_tenant_guc(self.tenant.id)
+        from orders.models import OrderEvent
+        event = OrderEvent.objects.filter(order_id=order_id, to_status="accepted").first()
+        self.assertEqual(event.actor.email, "kds2@invite.com")
+        reset_current_tenant(token)
+        set_tenant_guc(None)

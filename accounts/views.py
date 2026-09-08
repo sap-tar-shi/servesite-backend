@@ -4,7 +4,7 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
 from .serializers import LoginSerializer
-from .models import Membership
+from .models import User, Membership
 from .permissions import HasModulePermission
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.utils.decorators import method_decorator
@@ -121,3 +121,54 @@ class StaffCredentialsView(APIView):
         membership.user.set_password(new_password)
         membership.user.save()
         return Response({"email": membership.user.email, "password": new_password})
+
+
+class InviteStaffView(APIView):
+    """
+    Owner-only (billing_staff_domains). Per P2-T15 AC.
+    POST {"email": "..."} - invites a staff member:
+      - new user -> creates User + Membership(role=staff), returns a
+        one-time temp password (never stored/retrievable again after this).
+      - existing user (already registered elsewhere) -> just attaches a
+        Membership here; no password shown, since they already have one.
+    GET - lists this tenant's individually-invited staff (is_shared_account=False),
+    for the admin "Billing & Staff" page.
+    """
+
+    permission_classes = [HasModulePermission("billing_staff_domains")]
+
+    def get(self, request):
+        memberships = Membership.objects.filter(
+            tenant=request.tenant, role=Membership.ROLE_STAFF, is_shared_account=False,
+        ).select_related("user").order_by("created_at")
+        return Response([
+            {"email": m.user.email, "created_at": m.created_at}
+            for m in memberships
+        ])
+
+    def post(self, request):
+        email = request.data.get("email", "").strip().lower()
+        if not email:
+            return Response({"detail": "Email is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        user = User.objects.filter(email=email).first()
+        password_to_return = None
+        if user is None:
+            user = User.objects.create_user(email=email, password=secrets.token_urlsafe(12))
+            password_to_return = None  # set below only after we know creation succeeded
+            temp_password = secrets.token_urlsafe(12)
+            user.set_password(temp_password)
+            user.save()
+            password_to_return = temp_password
+
+        if Membership.objects.filter(user=user, tenant=request.tenant).exists():
+            return Response({"detail": "This person already has a membership at this restaurant."}, status=status.HTTP_400_BAD_REQUEST)
+
+        Membership.objects.create(
+            user=user, tenant=request.tenant, role=Membership.ROLE_STAFF, is_shared_account=False,
+        )
+
+        response_data = {"email": user.email}
+        if password_to_return:
+            response_data["password"] = password_to_return
+        return Response(response_data, status=status.HTTP_201_CREATED)
