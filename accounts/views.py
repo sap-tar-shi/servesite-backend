@@ -1,3 +1,4 @@
+import secrets
 from django.contrib.auth import authenticate, login, logout
 from rest_framework.views import APIView
 from rest_framework.response import Response
@@ -88,3 +89,35 @@ class BillingView(APIView):
 
     def get(self, request):
         return Response({"billing": "confidential-billing-data"})
+
+
+class StaffCredentialsView(APIView):
+    """
+    Owner-only (billing_staff_domains). GET reveals the shared staff
+    login's email only - the password is never stored in plaintext or
+    retrievable after creation. POST regenerates the password and returns
+    it once in the response body; this is the ONLY way to obtain/share
+    the current password. Per P2-T14 AC.
+    """
+
+    permission_classes = [HasModulePermission("billing_staff_domains")]
+
+    def _get_shared_membership(self, request):
+        return Membership.objects.filter(
+            tenant=request.tenant, role=Membership.ROLE_STAFF, is_shared_account=True,
+        ).select_related("user").first()
+
+    def get(self, request):
+        membership = self._get_shared_membership(request)
+        if membership is None:
+            return Response({"detail": "No shared staff account provisioned for this tenant."}, status=status.HTTP_404_NOT_FOUND)
+        return Response({"email": membership.user.email})
+
+    def post(self, request):
+        membership = self._get_shared_membership(request)
+        if membership is None:
+            return Response({"detail": "No shared staff account provisioned for this tenant."}, status=status.HTTP_404_NOT_FOUND)
+        new_password = secrets.token_urlsafe(12)
+        membership.user.set_password(new_password)
+        membership.user.save()
+        return Response({"email": membership.user.email, "password": new_password})

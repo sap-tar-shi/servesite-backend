@@ -146,3 +146,43 @@ class RBACMatrixTests(TestCase):
             failures, [],
             "RBAC matrix mismatch(es):\n" + "\n".join(failures)
         )
+
+
+class SharedStaffAccountTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(slug="shared-staff-tenant", name="Shared Staff Tenant")
+        self.host = "shared-staff-tenant.localhost"
+        self.owner = User.objects.create_user(email="owner@ss.com", password="testpass123")
+        Membership.objects.create(user=self.owner, tenant=self.tenant, role=Membership.ROLE_OWNER)
+
+    def test_shared_staff_membership_auto_created_on_tenant_creation(self):
+        membership = Membership.objects.get(tenant=self.tenant, role=Membership.ROLE_STAFF, is_shared_account=True)
+        self.assertEqual(membership.user.email, f"staff@{self.tenant.slug}.staff.internal")
+
+    def test_owner_can_reveal_shared_staff_email(self):
+        self.client.post("/api/auth/login/", {"email": "owner@ss.com", "password": "testpass123"},
+            content_type="application/json", HTTP_HOST=self.host)
+        resp = self.client.get("/api/auth/staff-credentials/", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["email"], f"staff@{self.tenant.slug}.staff.internal")
+
+    def test_owner_can_regenerate_shared_staff_password(self):
+        self.client.post("/api/auth/login/", {"email": "owner@ss.com", "password": "testpass123"},
+            content_type="application/json", HTTP_HOST=self.host)
+        resp = self.client.post("/api/auth/staff-credentials/", {}, HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+        new_password = resp.json()["password"]
+
+        membership = Membership.objects.get(tenant=self.tenant, role=Membership.ROLE_STAFF, is_shared_account=True)
+        self.client.logout()
+        login_resp = self.client.post("/api/auth/login/", {"email": membership.user.email, "password": new_password},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(login_resp.status_code, 200)
+
+    def test_non_owner_cannot_access_staff_credentials(self):
+        kitchen = User.objects.create_user(email="kitchen@ss.com", password="testpass123")
+        Membership.objects.create(user=kitchen, tenant=self.tenant, role=Membership.ROLE_KITCHEN)
+        self.client.post("/api/auth/login/", {"email": "kitchen@ss.com", "password": "testpass123"},
+            content_type="application/json", HTTP_HOST=self.host)
+        resp = self.client.get("/api/auth/staff-credentials/", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 403)

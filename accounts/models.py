@@ -61,6 +61,7 @@ class Membership(models.Model):
     user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="memberships")
     tenant = models.ForeignKey("tenants.Tenant", on_delete=models.CASCADE, related_name="memberships")
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)
+    is_shared_account = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:

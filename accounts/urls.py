@@ -2,6 +2,7 @@ from django.urls import path
 from .views import (
     LoginView, LogoutView, MeView, PricingView,
     SiteCustomizationView, LiveOrdersView, BillingView,
+    StaffCredentialsView,
 )
 
 urlpatterns = [
@@ -12,4 +13,5 @@ urlpatterns = [
     path("site-customization/", SiteCustomizationView.as_view(), name="site-customization"),
     path("live-orders/", LiveOrdersView.as_view(), name="live-orders"),
     path("billing/", BillingView.as_view(), name="billing"),
+    path("staff-credentials/", StaffCredentialsView.as_view(), name="staff-credentials"),
 ]
