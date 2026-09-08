@@ -127,7 +127,13 @@ class PaymentCreateView(APIView):
 
         if hasattr(order, "payment"):
             existing = order.payment
-            return Response({"razorpay_order_id": existing.razorpay_order_id, "amount": str(existing.amount)})
+            connection = RazorpayConnection.objects.filter(tenant=request.tenant, is_active=True).first()
+            return Response({
+                "razorpay_order_id": existing.razorpay_order_id,
+                "razorpay_key_id": connection.get_access_token() if connection and connection.auth_mode == "direct_keys" else None,
+                "amount": str(existing.amount),
+                "currency": "INR",  # Payment model doesn't store currency separately - always INR at creation time (see the create-branch below)
+            })
 
         connection = RazorpayConnection.objects.filter(tenant=request.tenant, is_active=True).first()
         if not connection:
