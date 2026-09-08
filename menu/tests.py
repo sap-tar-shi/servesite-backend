@@ -182,6 +182,12 @@ class PublicMenuViewTests(TestCase):
         sold_out = next(i for i in items if i["name"] == "Sold Out Item")
         self.assertFalse(sold_out["is_available"])
 
+    def test_public_item_exposes_id_and_modifier_groups_for_ordering(self):
+        resp = self.client.get("/api/menu/public/", HTTP_HOST=self.host)
+        item = resp.json()[0]["items"][0]
+        self.assertIn("id", item)
+        self.assertIn("modifier_groups", item)
+
 
 class MenuRevalidationTests(TestCase):
     def setUp(self):

@@ -83,7 +83,7 @@ class PublicMenuView(generics.ListAPIView):
     permission_classes = [permissions.AllowAny]
 
     def get_queryset(self):
-        return MenuCategory.objects.filter(visible=True).prefetch_related("items")
+        return MenuCategory.objects.filter(visible=True).prefetch_related("items", "items__modifier_groups__modifiers")
 
 
 class ModifierGroupListCreateView(generics.ListCreateAPIView):

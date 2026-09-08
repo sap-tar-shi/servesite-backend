@@ -34,10 +34,34 @@ class MenuCategorySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("A category with this name already exists.")
         return value
 
+
+class PublicModifierSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Modifier
+        fields = ["id", "name", "price_delta"]
+
+
+class PublicModifierGroupSerializer(serializers.ModelSerializer):
+    modifiers = PublicModifierSerializer(many=True, read_only=True)
+
+    class Meta:
+        model = ModifierGroup
+        fields = ["id", "name", "min_select", "max_select", "modifiers"]
+
+    def validate(self, data):
+        min_select = data.get("min_select", getattr(self.instance, "min_select", 0))
+        max_select = data.get("max_select", getattr(self.instance, "max_select", 1))
+        if min_select > max_select:
+            raise serializers.ValidationError("min_select cannot be greater than max_select.")
+        return data
+
+
 class PublicMenuItemSerializer(serializers.ModelSerializer):
+    modifier_groups = PublicModifierGroupSerializer(many=True, read_only=True)
+
     class Meta:
         model = MenuItem
-        fields = ["name", "description", "price", "is_available"]
+        fields = ["id", "name", "description", "price", "is_available", "modifier_groups"]
 
 
 class PublicMenuCategorySerializer(serializers.ModelSerializer):
@@ -45,7 +69,7 @@ class PublicMenuCategorySerializer(serializers.ModelSerializer):
 
     class Meta:
         model = MenuCategory
-        fields = ["name", "items"]
+        fields = ["id", "name", "items"]
 
 
 class ModifierSerializer(serializers.ModelSerializer):
