@@ -179,6 +179,21 @@ class OrderStateMachineTests(TestCase):
         reset_current_tenant(token)
         set_tenant_guc(None)
 
+    def test_pay_at_counter_order_can_be_marked_paid_by_staff(self):
+        order_id = self._place_order()  # payment_mode defaults to "pay_at_counter" in _place_order
+        resp = self.client.post(f"/api/orders/{order_id}/transition/", {"to_status": "paid"},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["status"], "paid")
+
+        token = set_current_tenant(self.tenant)
+        set_tenant_guc(self.tenant.id)
+        event = OrderEvent.objects.filter(order_id=order_id, to_status="paid").first()
+        self.assertIsNotNone(event)
+        self.assertEqual(event.actor.email, "kitchen@sm.com")
+        reset_current_tenant(token)
+        set_tenant_guc(None)
+
     def test_illegal_transition_rejected(self):
         order_id = self._place_order()
         resp = self.client.post(f"/api/orders/{order_id}/transition/", {"to_status": "completed"},
