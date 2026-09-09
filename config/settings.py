@@ -248,3 +248,10 @@ RAZORPAY_TOKEN_ENCRYPTION_KEY = env_config("RAZORPAY_TOKEN_ENCRYPTION_KEY", defa
 RAZORPAY_REDIRECT_URI = env_config("RAZORPAY_REDIRECT_URI", default="http://localhost:8000/api/payments/razorpay/callback/")
 RAZORPAY_TEST_KEY_ID = env_config("RAZORPAY_TEST_KEY_ID", default="")
 RAZORPAY_TEST_KEY_SECRET = env_config("RAZORPAY_TEST_KEY_SECRET", default="")
+
+# Platform's OWN Razorpay account — used to bill restaurants for their
+# ServeSite subscription (P3-T2). Distinct from RazorpayConnection, which
+# holds each TENANT's own gateway for their diners' order payments.
+PLATFORM_RAZORPAY_KEY_ID = env_config("PLATFORM_RAZORPAY_KEY_ID", default="")
+PLATFORM_RAZORPAY_KEY_SECRET = env_config("PLATFORM_RAZORPAY_KEY_SECRET", default="")
+PLATFORM_RAZORPAY_WEBHOOK_SECRET = env_config("PLATFORM_RAZORPAY_WEBHOOK_SECRET", default="")
