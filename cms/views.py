@@ -2,8 +2,10 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser
+from rest_framework.permissions import AllowAny
 from accounts.permissions import HasModulePermission
-from .tasks import generate_thumbnail
+from django.conf import settings
+from .tasks import generate_thumbnail, revalidate_public_site
 from .models import SiteConfig, Section, MediaAsset
 from .manifest import filter_to_whitelisted_fields, NonWhitelistedFieldError, get_editable_fields
 
@@ -55,6 +57,7 @@ class SiteContentUpdateView(APIView):
         )
         section.content.update(validated_fields)
         section.save(update_fields=["content"])
+        revalidate_public_site.delay(request.tenant.slug)
 
         return Response({"section_type": section_type, "content": section.content})
 
@@ -151,3 +154,42 @@ class MediaUploadView(APIView):
             {"id": str(asset.id), "url": asset.url, "thumbnail_url": asset.thumbnail_url},
             status=status.HTTP_201_CREATED,
         )
+
+
+class PublicSiteContentView(APIView):
+    """
+    GET /api/cms/public/site-content/ - AllowAny, shapes cms.Section rows
+    into exactly the SiteContent JSON shape templates/classic-bistro/types.ts
+    expects. This adapter layer exists because admin-facing field names
+    (about_text) don't necessarily match template prop names (text) -
+    keeping that translation here means the manifest/admin form can use
+    whatever names make sense for editing, without the template needing to
+    change. Falls back to empty-but-valid values if a tenant has no
+    Section rows yet (new tenant, nothing customized).
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        sections = {s.section_type: s.content for s in Section.objects.filter(page__page_type="landing")}
+        hero = sections.get("hero", {})
+        about = sections.get("about", {})
+        contact = sections.get("contact", {})
+
+        return Response({
+            "restaurant_name": hero.get("restaurant_name", request.tenant.name),
+            "logo": hero.get("logo"),
+            "hero": {
+                "headline": hero.get("headline", ""),
+                "tagline": hero.get("tagline", ""),
+                "hero_image": hero.get("hero_image"),
+            },
+            "about": {
+                "text": about.get("about_text", ""),
+            },
+            "contact": {
+                "address": contact.get("address", ""),
+                "phone": contact.get("phone", ""),
+                "opening_hours": contact.get("opening_hours", ""),
+            },
+        })

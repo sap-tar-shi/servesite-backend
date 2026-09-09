@@ -1,6 +1,7 @@
 import io
 from celery import shared_task
 from PIL import Image
+from django.conf import settings
 from django.core.files.base import ContentFile
 from django.core.files.storage import default_storage
 
@@ -35,3 +36,21 @@ def generate_thumbnail(media_asset_id):
         saved_path = default_storage.save(thumb_key, ContentFile(buffer.read()))
         asset.thumbnail_url = default_storage.url(saved_path)
         asset.save(update_fields=["thumbnail_url"])
+
+
+@shared_task
+def revalidate_public_site(tenant_slug):
+    """Same pattern as menu.tasks.revalidate_public_menu - best-effort ping,
+    60s timed revalidation from P1-T23 is the safety net if this fails."""
+    import requests
+    import logging
+    logger = logging.getLogger("servesite.revalidation")
+    try:
+        requests.post(
+            f"{settings.NEXT_APP_URL}/api/revalidate",
+            json={"tag": f"site-{tenant_slug}"},
+            headers={"x-revalidate-secret": settings.REVALIDATE_SECRET},
+            timeout=5,
+        )
+    except requests.RequestException:
+        logger.warning("REVALIDATION_PING_FAILED tenant_slug=%s", tenant_slug)
