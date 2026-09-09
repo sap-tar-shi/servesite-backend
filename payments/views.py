@@ -17,6 +17,7 @@ from core.db import set_tenant_guc
 from orders.models import Order
 from orders.serializers import OrderSerializer
 from .models import RazorpayConnection, RazorpayConnectAttempt, Payment, WebhookEvent
+from core.permissions import TenantNotSuspended
 
 
 class RazorpayConnectStartView(APIView):
@@ -116,7 +117,7 @@ class PaymentStatusView(APIView):
 
 
 class PaymentCreateView(APIView):
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [permissions.AllowAny, TenantNotSuspended]
 
     def post(self, request):
         order_id = request.data.get("order_id")

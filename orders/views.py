@@ -9,6 +9,7 @@ from accounts.permissions import HasModulePermission
 from django.core.cache import cache
 from django.utils.dateparse import parse_datetime
 from django.utils import timezone
+from core.permissions import TenantNotSuspended
 
 
 class OrderCreateView(APIView):
@@ -19,7 +20,7 @@ class OrderCreateView(APIView):
     nothing here is re-derived from MenuItem/Modifier after this point.
     """
 
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [permissions.AllowAny, TenantNotSuspended]
 
     def post(self, request):
         try:
@@ -75,7 +76,7 @@ class OrderDetailView(generics.RetrieveAPIView):
     """GET /api/orders/<id>/ - lets a diner poll their own order's status."""
 
     serializer_class = OrderSerializer
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [permissions.AllowAny, TenantNotSuspended]
 
     def get_queryset(self):
         return Order.objects.prefetch_related("items")

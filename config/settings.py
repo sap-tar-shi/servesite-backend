@@ -255,3 +255,12 @@ RAZORPAY_TEST_KEY_SECRET = env_config("RAZORPAY_TEST_KEY_SECRET", default="")
 PLATFORM_RAZORPAY_KEY_ID = env_config("PLATFORM_RAZORPAY_KEY_ID", default="")
 PLATFORM_RAZORPAY_KEY_SECRET = env_config("PLATFORM_RAZORPAY_KEY_SECRET", default="")
 PLATFORM_RAZORPAY_WEBHOOK_SECRET = env_config("PLATFORM_RAZORPAY_WEBHOOK_SECRET", default="")
+
+BILLING_DUNNING_GRACE_DAYS = env_config("BILLING_DUNNING_GRACE_DAYS", default=3, cast=int)
+
+CELERY_BEAT_SCHEDULE = {
+    "check-dunning-suspensions": {
+        "task": "billing.tasks.check_dunning_suspensions",
+        "schedule": 3600.0,  # hourly
+    },
+}

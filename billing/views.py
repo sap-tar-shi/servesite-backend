@@ -9,6 +9,7 @@ import json
 import hmac
 import hashlib
 from django.conf import settings
+from django.utils import timezone
 from django.utils.dateparse import parse_datetime
 from tenants.models import Tenant
 from tenants.context import set_current_tenant, reset_current_tenant
@@ -146,12 +147,23 @@ class BillingWebhookView(APIView):
             except Subscription.DoesNotExist:
                 return Response({"detail": "Unknown subscription."}, status=status.HTTP_400_BAD_REQUEST)
 
+            previous_status = sub.status
             sub.status = new_status
             current_end = sub_entity.get("current_end")
             if current_end:
                 from datetime import datetime, timezone as dt_timezone
                 sub.current_period_end = datetime.fromtimestamp(current_end, tz=dt_timezone.utc)
-            sub.save(update_fields=["status", "current_period_end", "updated_at"])
+
+            if new_status == "halted" and previous_status != "halted":
+                sub.halted_at = timezone.now()
+            elif new_status == "active":
+                sub.halted_at = None
+                # billing recovered - lift a billing-caused suspension automatically
+                if tenant.status == Tenant.STATUS_SUSPENDED:
+                    tenant.status = Tenant.STATUS_ACTIVE
+                    tenant.save(update_fields=["status"])
+
+            sub.save(update_fields=["status", "current_period_end", "halted_at", "updated_at"])
         finally:
             reset_current_tenant(token)
             set_tenant_guc(None)

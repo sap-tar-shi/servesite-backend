@@ -68,6 +68,7 @@ class Subscription(TenantScopedModel):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="created")
     current_period_end = models.DateTimeField(null=True, blank=True)
     mandate_status = models.CharField(max_length=30, blank=True, default="")
+    halted_at = models.DateTimeField(null=True, blank=True)  # P3-T3: dunning clock starts here
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta(TenantScopedModel.Meta):

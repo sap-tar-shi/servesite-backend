@@ -9,6 +9,7 @@ from .serializers import (
 )
 from .tasks import revalidate_public_menu
 from .pricing import price_cart_items, CartPricingError
+from core.permissions import TenantNotSuspended
 
 class MenuCategoryListCreateView(generics.ListCreateAPIView):
     serializer_class = MenuCategorySerializer
@@ -135,7 +136,7 @@ class CartValidateView(APIView):
     logic lives in menu/pricing.py (shared with orders.OrderCreateView).
     """
 
-    permission_classes = [permissions.AllowAny]
+    permission_classes = [permissions.AllowAny, TenantNotSuspended]
 
     def post(self, request):
         try:
