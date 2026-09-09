@@ -9,6 +9,10 @@ from billing.serializers import PlanAdminSerializer, SubscriptionOversightSerial
 from .serializers import TenantAdminSerializer, AuditLogSerializer
 from .models import SuperAdmin, AuditLog
 from .permissions import IsPlatformAdminOrigin, IsSuperAdminAuthenticated
+from templates_registry.models import TemplateRegistry, TemplateVersion
+from templates_registry.serializers import (
+    TemplateRegistrySerializer, TemplateRegistryWriteSerializer, TemplateVersionSerializer,
+)
 
 
 class SuperAdminLoginView(APIView):
@@ -43,7 +47,7 @@ class SuperAdminMeView(APIView):
         return Response({"email": request.superadmin.email})
 
 
-def _log(request, action, tenant=None, details=None):
+def _log(request, "template_version.publish", details={"template_id": str(template.id), "version": version.version}):
     AuditLog.objects.create(
         superadmin=request.superadmin, action=action,
         target_tenant_id=tenant.id if tenant else None, details=details or {},
@@ -195,3 +199,55 @@ class SubscriptionOversightListView(APIView):
         if status_filter:
             subs = subs.filter(status=status_filter)
         return Response(SubscriptionOversightSerializer(subs, many=True).data)
+
+
+class TemplateRegistryListCreateView(APIView):
+    """GET: all template families with their versions nested. POST: register a new family."""
+
+    permission_classes = [IsSuperAdminAuthenticated]
+
+    def get(self, request):
+        templates = TemplateRegistry.objects.prefetch_related("versions").order_by("name")
+        return Response(TemplateRegistrySerializer(templates, many=True).data)
+
+    def post(self, request):
+        serializer = TemplateRegistryWriteSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        template = serializer.save()
+        _log(request, "template.create", details={"template_id": str(template.id), "name": template.name})
+        return Response(TemplateRegistrySerializer(template).data, status=status.HTTP_201_CREATED)
+
+
+class TemplateRegistryDetailView(APIView):
+    """PATCH: e.g. flip status to 'deprecated'. Never edits published versions - see TemplateVersionCreateView."""
+
+    permission_classes = [IsSuperAdminAuthenticated]
+
+    def patch(self, request, template_id):
+        template = get_object_or_404(TemplateRegistry, id=template_id)
+        serializer = TemplateRegistryWriteSerializer(template, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        _log(request, "template.update", details={"template_id": str(template.id), "changed_fields": list(request.data.keys())})
+        return Response(TemplateRegistrySerializer(template).data)
+
+
+class TemplateVersionCreateView(APIView):
+    """
+    POST: publish a new immutable version under a template family. Per the
+    model docstring, this NEVER mutates a pinned live SiteConfig - it only
+    adds a new, independently-selectable version. No PATCH/DELETE exposed
+    for versions at all - once published, a version is permanent (soft
+    deprecation happens at the TemplateRegistry level, not per-version).
+    """
+
+    permission_classes = [IsSuperAdminAuthenticated]
+
+    def post(self, request, template_id):
+        template = get_object_or_404(TemplateRegistry, id=template_id)
+        serializer = TemplateVersionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        version = serializer.save(template=template)
+        _log(request, "template_version.publish", target_tenant_id=None,
+             details={"template_id": str(template.id), "version": version.version})
+        return Response(TemplateVersionSerializer(version).data, status=status.HTTP_201_CREATED)

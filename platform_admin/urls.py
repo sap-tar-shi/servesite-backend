@@ -3,6 +3,7 @@ from .views import (
     SuperAdminLoginView, SuperAdminLogoutView, SuperAdminMeView,
     TenantListCreateView, TenantDetailView, TenantSuspendView, AuditLogListView,
     PlanOversightListCreateView, PlanOversightDetailView, SubscriptionOversightListView,
+    TemplateRegistryListCreateView, TemplateRegistryDetailView, TemplateVersionCreateView,
 )
 
 urlpatterns = [
@@ -16,4 +17,7 @@ urlpatterns = [
     path("plans/", PlanOversightListCreateView.as_view(), name="platform-plan-list-create"),
     path("plans/<uuid:plan_id>/", PlanOversightDetailView.as_view(), name="platform-plan-detail"),
     path("subscriptions/", SubscriptionOversightListView.as_view(), name="platform-subscription-oversight"),
+    path("templates/", TemplateRegistryListCreateView.as_view(), name="platform-template-list-create"),
+    path("templates/<uuid:template_id>/", TemplateRegistryDetailView.as_view(), name="platform-template-detail"),
+    path("templates/<uuid:template_id>/versions/", TemplateVersionCreateView.as_view(), name="platform-template-version-create"),
 ]
