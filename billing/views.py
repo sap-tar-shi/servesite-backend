@@ -5,7 +5,15 @@ from accounts.permissions import HasModulePermission
 from .models import Plan, Subscription
 from .serializers import PlanSerializer, SubscriptionSerializer
 from .razorpay_client import create_subscription
+import json
+import hmac
+import hashlib
 from django.conf import settings
+from django.utils.dateparse import parse_datetime
+from tenants.models import Tenant
+from tenants.context import set_current_tenant, reset_current_tenant
+from core.db import set_tenant_guc
+from .models import BillingWebhookEvent
 
 
 class PlanListView(APIView):
@@ -65,3 +73,87 @@ class SubscriptionView(APIView):
             "razorpay_subscription_id": data["id"],
             "razorpay_key_id": settings.PLATFORM_RAZORPAY_KEY_ID,
         }, status=status.HTTP_201_CREATED)
+
+
+class BillingWebhookView(APIView):
+    """
+    Platform-account webhook (Subscriptions events) - NOT YET VERIFIED against
+    a live delivery, same limitation as payments.PaymentWebhookView (see
+    docs/deferred-to-prod.md): Razorpay refuses localhost webhook URLs and
+    ngrok isn't available here. Proven only against synthetic signed
+    payloads in billing/tests.py until this goes to production.
+
+    Unlike PaymentWebhookView, this is platform-level, not per-tenant - one
+    fixed PLATFORM_RAZORPAY_WEBHOOK_SECRET, not a RazorpayConnection lookup.
+    Tenant is identified via notes.tenant_id set at Subscription creation.
+    """
+
+    permission_classes = [permissions.AllowAny]
+
+    ACTIVE_STATES = {"authenticated", "activated", "charged"}
+    STATUS_MAP = {
+        "subscription.authenticated": "active",
+        "subscription.activated": "active",
+        "subscription.charged": "active",
+        "subscription.pending": "pending",
+        "subscription.halted": "halted",
+        "subscription.cancelled": "cancelled",
+        "subscription.paused": "paused",
+        "subscription.completed": "completed",
+    }
+
+    def post(self, request):
+        signature = request.headers.get("X-Razorpay-Signature", "")
+        expected = hmac.new(
+            settings.PLATFORM_RAZORPAY_WEBHOOK_SECRET.encode(), request.body, hashlib.sha256
+        ).hexdigest()
+        if not hmac.compare_digest(expected, signature):
+            return Response({"detail": "Invalid signature."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            payload = json.loads(request.body)
+        except (json.JSONDecodeError, TypeError):
+            return Response({"detail": "Invalid JSON."}, status=status.HTTP_400_BAD_REQUEST)
+
+        event_type = payload.get("event", "")
+        new_status = self.STATUS_MAP.get(event_type)
+        if new_status is None:
+            return Response({"detail": "Ignored event type."}, status=status.HTTP_200_OK)
+
+        sub_entity = payload.get("payload", {}).get("subscription", {}).get("entity", {})
+        razorpay_subscription_id = sub_entity.get("id")
+        notes = sub_entity.get("notes", {})
+        tenant_id = notes.get("tenant_id")
+        if not razorpay_subscription_id or not tenant_id:
+            return Response({"detail": "Missing subscription id or tenant_id in notes."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            tenant = Tenant.objects.get(id=tenant_id)
+        except Tenant.DoesNotExist:
+            return Response({"detail": "Unknown tenant."}, status=status.HTTP_400_BAD_REQUEST)
+
+        event_id = payload.get("id") or f"{razorpay_subscription_id}:{event_type}"
+
+        token = set_current_tenant(tenant)
+        set_tenant_guc(tenant.id)
+        try:
+            if BillingWebhookEvent.objects.filter(event_id=event_id).exists():
+                return Response({"detail": "Already processed."}, status=status.HTTP_200_OK)
+            BillingWebhookEvent.objects.create(tenant=tenant, event_id=event_id, event_type=event_type)
+
+            try:
+                sub = Subscription.objects.get(tenant=tenant, razorpay_subscription_id=razorpay_subscription_id)
+            except Subscription.DoesNotExist:
+                return Response({"detail": "Unknown subscription."}, status=status.HTTP_400_BAD_REQUEST)
+
+            sub.status = new_status
+            current_end = sub_entity.get("current_end")
+            if current_end:
+                from datetime import datetime, timezone as dt_timezone
+                sub.current_period_end = datetime.fromtimestamp(current_end, tz=dt_timezone.utc)
+            sub.save(update_fields=["status", "current_period_end", "updated_at"])
+        finally:
+            reset_current_tenant(token)
+            set_tenant_guc(None)
+
+        return Response({"detail": "ok"}, status=status.HTTP_200_OK)

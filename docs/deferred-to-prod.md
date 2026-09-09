@@ -57,3 +57,26 @@ Current state:
 Before going live: deploy publicly reachable, set up a real Test Mode
 webhook in Razorpay's dashboard, trigger a real test payment, confirm the
 payload matches what PaymentWebhookView expects, adjust if not.
+
+
+## Platform billing (P3-T2)
+
+- `sync_razorpay_plans` and `SubscriptionView.post` both call the platform's
+  own Razorpay account (`PLATFORM_RAZORPAY_KEY_ID/SECRET`) - this account is
+  currently not authorizing API requests at all (401 Unauthorized on `/v1/plans`
+  even with freshly regenerated Test keys, confirmed via direct curl, not a
+  code bug). Root cause not yet isolated - candidates: account-level
+  activation/KYC gate on the Subscriptions product, or the API not being
+  enabled for this particular account. Needs a working Razorpay account
+  before `sync_razorpay_plans` or the subscribe flow can be exercised live.
+- `BillingWebhookView` is unverified against a live delivery for the same
+  reason `PaymentWebhookView` is (§ existing note above): Razorpay refuses
+  localhost URLs, ngrok unavailable. Proven only via synthetic signed
+  payloads in `billing/tests.py`.
+- Before production rollout: (1) resolve the Razorpay account issue, (2) run
+  `sync_razorpay_plans` for real, (3) configure the platform webhook URL in
+  Razorpay Dashboard -> Settings -> Webhooks pointing at
+  `https://<prod-domain>/api/billing/webhook/` with
+  `PLATFORM_RAZORPAY_WEBHOOK_SECRET` matching what's configured there, (4)
+  do one real end-to-end subscribe+authenticate+webhook test before trusting
+  this in prod.
