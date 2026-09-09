@@ -80,3 +80,28 @@ payload matches what PaymentWebhookView expects, adjust if not.
   `PLATFORM_RAZORPAY_WEBHOOK_SECRET` matching what's configured there, (4)
   do one real end-to-end subscribe+authenticate+webhook test before trusting
   this in prod.
+
+
+## Super-admin origin (P3-T5/P3-T6)
+
+- Real SSO (SAML/OIDC, e.g. against Google Workspace) was NOT implemented -
+  `SuperAdmin` currently uses its own email/password login, gated by
+  `PLATFORM_ADMIN_ALLOWED_IPS` (empty in dev = no IP restriction at all).
+  Before production: (1) set `PLATFORM_ADMIN_ALLOWED_IPS` to the real
+  office/VPN egress IP(s), (2) decide whether SSO is actually required for
+  launch or whether IP-restriction + strong passwords is an acceptable v1.
+- `platform_admin/permissions.py::_client_ip` reads `REMOTE_ADDR` directly.
+  This breaks once a real reverse proxy/load balancer sits in front in
+  production - needs `X-Forwarded-For` parsing against a trusted proxy
+  list instead, or the IP allowlist will silently see the proxy's IP, not
+  the real client's, and either block everyone or (worse) allow anyone
+  routed through the same proxy.
+- `admin.localhost` was added to dev `hosts` file and `RESERVED_HOSTS`;
+  production needs `admin.platform.com` DNS + TLS provisioned (same
+  wildcard-DNS/TLS deferral already noted for tenant subdomains applies
+  here too).
+- Tenant provisioning (`TenantListCreateView.post`) has no email delivery
+  wired up for the owner's temp password - it's returned directly in the
+  API response for now (fine for a super-admin operator using it
+  manually; NOT fine if this ever becomes a self-serve signup flow without
+  a human in the loop reading the response).

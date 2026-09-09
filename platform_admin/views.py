@@ -4,6 +4,8 @@ from rest_framework import status
 from django.shortcuts import get_object_or_404
 from tenants.models import Tenant
 from accounts.models import User, Membership
+from billing.models import Plan, Subscription
+from billing.serializers import PlanAdminSerializer, SubscriptionOversightSerializer
 from .serializers import TenantAdminSerializer, AuditLogSerializer
 from .models import SuperAdmin, AuditLog
 from .permissions import IsPlatformAdminOrigin, IsSuperAdminAuthenticated
@@ -144,3 +146,52 @@ class AuditLogListView(APIView):
         if tenant_id:
             logs = logs.filter(target_tenant_id=tenant_id)
         return Response(AuditLogSerializer(logs[:200], many=True).data)
+
+
+class PlanOversightListCreateView(APIView):
+    """GET: all plans (active + inactive). POST: create a new plan (super-admin only - tenants never create plans)."""
+
+    permission_classes = [IsSuperAdminAuthenticated]
+
+    def get(self, request):
+        plans = Plan.objects.all().order_by("price")
+        return Response(PlanAdminSerializer(plans, many=True).data)
+
+    def post(self, request):
+        serializer = PlanAdminSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        plan = serializer.save()
+        _log(request, "plan.create", details={"plan_id": str(plan.id), "name": plan.name})
+        return Response(PlanAdminSerializer(plan).data, status=status.HTTP_201_CREATED)
+
+
+class PlanOversightDetailView(APIView):
+    """PATCH: edit an existing plan's price/limits/active flag."""
+
+    permission_classes = [IsSuperAdminAuthenticated]
+
+    def patch(self, request, plan_id):
+        plan = get_object_or_404(Plan, id=plan_id)
+        serializer = PlanAdminSerializer(plan, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        _log(request, "plan.update", details={"plan_id": str(plan.id), "changed_fields": list(request.data.keys())})
+        return Response(PlanAdminSerializer(plan).data)
+
+
+class SubscriptionOversightListView(APIView):
+    """
+    GET: cross-tenant subscription status, per architecture §13's
+    "Plans & billing oversight" surface. Uses Subscription.unscoped since
+    this is inherently a cross-tenant read (super-admin's whole purpose).
+    Optional ?status=halted filter for finding at-risk tenants fast.
+    """
+
+    permission_classes = [IsSuperAdminAuthenticated]
+
+    def get(self, request):
+        subs = Subscription.unscoped.select_related("tenant", "plan").order_by("-updated_at")
+        status_filter = request.query_params.get("status")
+        if status_filter:
+            subs = subs.filter(status=status_filter)
+        return Response(SubscriptionOversightSerializer(subs, many=True).data)
