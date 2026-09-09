@@ -4,6 +4,8 @@ from .views import (
     TenantListCreateView, TenantDetailView, TenantSuspendView, AuditLogListView,
     PlanOversightListCreateView, PlanOversightDetailView, SubscriptionOversightListView,
     TemplateRegistryListCreateView, TemplateRegistryDetailView, TemplateVersionCreateView,
+    TemplateRegistryListCreateView, TemplateRegistryDetailView, TemplateVersionCreateView,
+    PlatformMetricsView,
 )
 
 urlpatterns = [
@@ -20,4 +22,5 @@ urlpatterns = [
     path("templates/", TemplateRegistryListCreateView.as_view(), name="platform-template-list-create"),
     path("templates/<uuid:template_id>/", TemplateRegistryDetailView.as_view(), name="platform-template-detail"),
     path("templates/<uuid:template_id>/versions/", TemplateVersionCreateView.as_view(), name="platform-template-version-create"),
+    path("metrics/", PlatformMetricsView.as_view(), name="platform-metrics"),
 ]

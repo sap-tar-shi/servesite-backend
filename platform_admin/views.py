@@ -1,11 +1,14 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
+from datetime import timedelta
 from rest_framework import status
+from django.utils import timezone
 from django.shortcuts import get_object_or_404
-from tenants.models import Tenant
+from tenants.models import Tenant, Count, Sum
 from accounts.models import User, Membership
 from billing.models import Plan, Subscription
 from billing.serializers import PlanAdminSerializer, SubscriptionOversightSerializer
+from orders.models import Order
 from .serializers import TenantAdminSerializer, AuditLogSerializer
 from .models import SuperAdmin, AuditLog
 from .permissions import IsPlatformAdminOrigin, IsSuperAdminAuthenticated
@@ -251,3 +254,51 @@ class TemplateVersionCreateView(APIView):
         _log(request, "template_version.publish", target_tenant_id=None,
              details={"template_id": str(template.id), "version": version.version})
         return Response(TemplateVersionSerializer(version).data, status=status.HTTP_201_CREATED)
+
+
+class PlatformMetricsView(APIView):
+    """
+    Cross-tenant operational metrics (architecture §13's "Cross-tenant
+    operational metrics" surface, P3-T9). Every query here goes through
+    .unscoped explicitly - each one logs a UNSCOPED_ACCESS warning line
+    (see core/models.py's UnscopedManager), so this endpoint is the ONLY
+    place in the codebase that's expected to generate that log line at
+    volume - anywhere else it appears is worth investigating.
+    """
+
+    permission_classes = [IsSuperAdminAuthenticated]
+
+    def get(self, request):
+        since = timezone.now() - timedelta(days=30)
+
+        tenants_by_status = dict(
+            Tenant.objects.values_list("status").annotate(count=Count("id")).values_list("status", "count")
+        )
+
+        orders_last_30d = Order.unscoped.filter(created_at__gte=since)
+        orders_by_status = dict(
+            orders_last_30d.values_list("status").annotate(count=Count("id")).values_list("status", "count")
+        )
+        revenue_last_30d = orders_last_30d.filter(status__in=["paid", "served", "handed_over"]).aggregate(
+            total=Sum("subtotal")
+        )["total"] or 0
+
+        subscriptions_by_status = dict(
+            Subscription.unscoped.values_list("status").annotate(count=Count("id")).values_list("status", "count")
+        )
+        mrr_proxy = (
+            Subscription.unscoped.filter(status="active").select_related("plan")
+            .aggregate(total=Sum("plan__price"))["total"] or 0
+        )
+
+        return Response({
+            "generated_at": timezone.now(),
+            "tenants_by_status": tenants_by_status,
+            "orders_last_30d": {
+                "by_status": orders_by_status,
+                "total_count": orders_last_30d.count(),
+                "revenue_proxy": revenue_last_30d,  # sum of subtotal on paid/served/handed_over orders - restaurant-side revenue, NOT platform revenue
+            },
+            "subscriptions_by_status": subscriptions_by_status,
+            "mrr_proxy": mrr_proxy,  # sum of active subscriptions' plan price - platform's own revenue proxy
+        })
