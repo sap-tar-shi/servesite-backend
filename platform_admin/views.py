@@ -4,7 +4,8 @@ from datetime import timedelta
 from rest_framework import status
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
-from tenants.models import Tenant, Count, Sum
+from django.db.models import Count, Sum
+from tenants.models import Tenant
 from accounts.models import User, Membership
 from billing.models import Plan, Subscription
 from billing.serializers import PlanAdminSerializer, SubscriptionOversightSerializer
@@ -50,7 +51,7 @@ class SuperAdminMeView(APIView):
         return Response({"email": request.superadmin.email})
 
 
-def _log(request, "template_version.publish", details={"template_id": str(template.id), "version": version.version}):
+def _log(request, action, tenant=None, details=None):
     AuditLog.objects.create(
         superadmin=request.superadmin, action=action,
         target_tenant_id=tenant.id if tenant else None, details=details or {},
@@ -251,8 +252,7 @@ class TemplateVersionCreateView(APIView):
         serializer = TemplateVersionSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         version = serializer.save(template=template)
-        _log(request, "template_version.publish", target_tenant_id=None,
-             details={"template_id": str(template.id), "version": version.version})
+        _log(request, "template_version.publish", details={"template_id": str(template.id), "version": version.version})
         return Response(TemplateVersionSerializer(version).data, status=status.HTTP_201_CREATED)
 
 
