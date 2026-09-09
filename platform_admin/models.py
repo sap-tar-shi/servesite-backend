@@ -29,3 +29,24 @@ class SuperAdmin(models.Model):
 
     def __str__(self):
         return self.email
+
+
+class AuditLog(models.Model):
+    """
+    Every super-admin action that touches tenant state gets one row here.
+    Append-only - no update/delete API is ever exposed for this model.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    superadmin = models.ForeignKey(SuperAdmin, on_delete=models.PROTECT, related_name="audit_logs")
+    action = models.CharField(max_length=50)  # e.g. "tenant.create", "tenant.suspend"
+    target_tenant_id = models.UUIDField(null=True, blank=True)
+    details = models.JSONField(default=dict, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "platform_admin_audit_log"
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.superadmin.email} :: {self.action} :: {self.target_tenant_id}"
