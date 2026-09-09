@@ -31,4 +31,5 @@ urlpatterns = [
     path("api/payments/razorpay/callback/", RazorpayConnectCallbackView.as_view(), name="razorpay-callback"),
     path("api/payments/webhook/", PaymentWebhookView.as_view(), name="payment-webhook"),
     path("api/billing/", include("billing.urls")),
+    path("api/platform-admin/", include("platform_admin.urls")),
 ]

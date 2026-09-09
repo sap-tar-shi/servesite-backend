@@ -60,7 +60,8 @@ INSTALLED_APPS = [
     "tables",
     "orders",
     "payments",
-    "billing"
+    "billing",
+    "platform_admin",
 ]
 
 MIDDLEWARE = [
@@ -73,6 +74,8 @@ MIDDLEWARE = [
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "platform_admin.middleware.SuperAdminSessionMiddleware",
 ]
 
 ROOT_URLCONF = "config.urls"
@@ -264,3 +267,7 @@ CELERY_BEAT_SCHEDULE = {
         "schedule": 3600.0,  # hourly
     },
 }
+
+
+PLATFORM_ADMIN_HOST = env_config("PLATFORM_ADMIN_HOST", default="admin.localhost")
+PLATFORM_ADMIN_ALLOWED_IPS = env_config("PLATFORM_ADMIN_ALLOWED_IPS", default="")

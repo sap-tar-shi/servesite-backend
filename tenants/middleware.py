@@ -5,7 +5,7 @@ from core.db import set_tenant_guc
 
 # Hosts that are never tenant subdomains — platform-level surfaces.
 # Extend this as super-admin / marketing domains are added (P3-T5, P4-T4).
-RESERVED_HOSTS = {"localhost", "127.0.0.1", "platform.com", "www.platform.com", "admin.platform.com"}
+RESERVED_HOSTS = {"localhost", "127.0.0.1", "platform.com", "www.platform.com", "admin.platform.com", "admin.localhost"}
 
 
 def resolve_slug_from_host(host: str):
