@@ -59,7 +59,8 @@ INSTALLED_APPS = [
     "menu",
     "tables",
     "orders",
-    "payments"
+    "payments",
+    "billing"
 ]
 
 MIDDLEWARE = [
