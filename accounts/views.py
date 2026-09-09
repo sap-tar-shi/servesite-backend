@@ -8,6 +8,7 @@ from .models import User, Membership
 from .permissions import HasModulePermission
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.utils.decorators import method_decorator
+from billing.services import enforce_count_limit, FeatureLimitExceeded
 
 
 def _serialize_user_with_memberships(user):
@@ -163,6 +164,17 @@ class InviteStaffView(APIView):
 
         if Membership.objects.filter(user=user, tenant=request.tenant).exists():
             return Response({"detail": "This person already has a membership at this restaurant."}, status=status.HTTP_400_BAD_REQUEST)
+
+        current_staff_count = Membership.objects.filter(
+            tenant=request.tenant, role=Membership.ROLE_STAFF, is_shared_account=False,
+        ).count()
+        try:
+            enforce_count_limit(
+                request.tenant, limit_key="max_staff_accounts",
+                current_count=current_staff_count, item_label="staff accounts",
+            )
+        except FeatureLimitExceeded as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
         Membership.objects.create(
             user=user, tenant=request.tenant, role=Membership.ROLE_STAFF, is_shared_account=False,

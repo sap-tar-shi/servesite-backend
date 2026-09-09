@@ -1,4 +1,4 @@
-from rest_framework import generics, permissions, status
+from rest_framework import generics, permissions, status, serializers
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from accounts.permissions import HasModulePermission
@@ -10,6 +10,7 @@ from .serializers import (
 from .tasks import revalidate_public_menu
 from .pricing import price_cart_items, CartPricingError
 from core.permissions import TenantNotSuspended
+from billing.services import enforce_count_limit, FeatureLimitExceeded
 
 class MenuCategoryListCreateView(generics.ListCreateAPIView):
     serializer_class = MenuCategorySerializer
@@ -52,6 +53,14 @@ class MenuItemListCreateView(generics.ListCreateAPIView):
         return qs
 
     def perform_create(self, serializer):
+        current_count = MenuItem.objects.count()
+        try:
+            enforce_count_limit(
+                self.request.tenant, limit_key="max_menu_items",
+                current_count=current_count, item_label="menu items",
+            )
+        except FeatureLimitExceeded as e:
+            raise serializers.ValidationError({"detail": str(e)})
         serializer.save(tenant=self.request.tenant)
 
 
