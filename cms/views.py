@@ -79,6 +79,42 @@ class EditableFieldsView(APIView):
         return Response({"editable_fields": sorted(get_editable_fields(site_config))})
 
 
+class SiteContentView(APIView):
+    """
+    GET /api/cms/site-content/?section_type=hero
+
+    Returns the CURRENT content for one section, so the admin edit form
+    has something to populate fields with. Added as a Phase-3-frontend-pass
+    prerequisite - SiteContentUpdateView is PATCH-only and EditableFieldsView
+    only returns field NAMES, not current values; neither lets a form
+    pre-fill itself, which FE-7 needs.
+    """
+
+    permission_classes = [HasModulePermission("site_customization")]
+
+    def get(self, request):
+        section_type = request.query_params.get("section_type")
+        if not section_type:
+            return Response({"detail": "section_type query param is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        section = Section.objects.filter(page__page_type="landing", section_type=section_type).first()
+        return Response({"section_type": section_type, "content": section.content if section else {}})
+
+
+class AllSiteContentView(APIView):
+    """
+    GET /api/cms/site-content/all/ - every section's content in one call,
+    keyed by section_type. Lets the FE-7 page render one form per section
+    without N+1 requests (one per editable section).
+    """
+
+    permission_classes = [HasModulePermission("site_customization")]
+
+    def get(self, request):
+        sections = Section.objects.filter(page__page_type="landing")
+        return Response({s.section_type: s.content for s in sections})
+
+
 class MediaUploadView(APIView):
     """
     POST /api/cms/media/  (multipart/form-data, field name "file")
