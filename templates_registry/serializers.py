@@ -22,3 +22,15 @@ class TemplateRegistryWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = TemplateRegistry
         fields = ["name", "display_name", "preview_image", "status"]
+
+
+class TemplateRegistryWithLatestVersionSerializer(serializers.ModelSerializer):
+    latest_version = serializers.SerializerMethodField()
+
+    class Meta:
+        model = TemplateRegistry
+        fields = ["id", "name", "display_name", "preview_image", "latest_version"]
+
+    def get_latest_version(self, obj):
+        latest = obj.versions.order_by("-sequence").first()
+        return TemplateVersionSerializer(latest).data if latest else None

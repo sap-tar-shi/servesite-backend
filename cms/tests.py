@@ -190,3 +190,63 @@ class TemplateUpgradeTests(TestCase):
         resp = self.client.post("/api/cms/template/upgrade/", {"template_version_id": str(self.v1.id)},
             content_type="application/json", HTTP_HOST=self.host)
         self.assertEqual(resp.status_code, 400)
+
+
+class TemplateSwitchTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(slug="switch-tenant", name="Switch Tenant")
+        self.host = "switch-tenant.localhost"
+        self.owner = User.objects.create_user(email="owner@switch.com", password="testpass123")
+        Membership.objects.create(user=self.owner, tenant=self.tenant, role=Membership.ROLE_OWNER)
+
+        self.family_a = TemplateRegistry.objects.create(name="switch-family-a", display_name="Family A")
+        self.v_a1 = TemplateVersion.objects.create(
+            template=self.family_a, version="1.0.0", capability_manifest={"sections": ["hero"], "editable_fields": [], "theme_tokens": []},
+        )
+        self.family_b = TemplateRegistry.objects.create(name="switch-family-b", display_name="Family B")
+        self.v_b1 = TemplateVersion.objects.create(
+            template=self.family_b, version="1.0.0", capability_manifest={"sections": ["hero"], "editable_fields": [], "theme_tokens": []},
+        )
+        self.v_b2 = TemplateVersion.objects.create(
+            template=self.family_b, version="1.1.0", capability_manifest={"sections": ["hero"], "editable_fields": [], "theme_tokens": []},
+        )
+
+        token = set_current_tenant(self.tenant)
+        set_tenant_guc(self.tenant.id)
+        SiteConfig.objects.create(tenant=self.tenant, template_version=self.v_a1)
+        page = Page.objects.create(tenant=self.tenant, page_type=Page.TYPE_LANDING)
+        Section.objects.create(tenant=self.tenant, page=page, section_type="hero", content={"headline": "Keep me"})
+        reset_current_tenant(token)
+        set_tenant_guc(None)
+
+        self.client.post("/api/auth/login/", {"email": "owner@switch.com", "password": "testpass123"},
+            content_type="application/json", HTTP_HOST=self.host)
+
+    def test_available_templates_excludes_current_family(self):
+        resp = self.client.get("/api/cms/template/available-templates/", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+        family_ids = [t["id"] for t in resp.json()]
+        self.assertNotIn(str(self.family_a.id), family_ids)
+        self.assertIn(str(self.family_b.id), family_ids)
+
+    def test_switch_lands_on_latest_version_of_target_family(self):
+        resp = self.client.post("/api/cms/template/switch/", {"template_id": str(self.family_b.id)},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["id"], str(self.v_b2.id))
+
+    def test_switch_preserves_content(self):
+        self.client.post("/api/cms/template/switch/", {"template_id": str(self.family_b.id)},
+            content_type="application/json", HTTP_HOST=self.host)
+
+        token = set_current_tenant(self.tenant)
+        set_tenant_guc(self.tenant.id)
+        section = Section.objects.get(section_type="hero")
+        reset_current_tenant(token)
+        set_tenant_guc(None)
+        self.assertEqual(section.content["headline"], "Keep me")
+
+    def test_switch_rejects_same_family(self):
+        resp = self.client.post("/api/cms/template/switch/", {"template_id": str(self.family_a.id)},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 400)

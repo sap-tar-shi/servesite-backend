@@ -2,6 +2,7 @@ from django.urls import path
 from .views import (
     SiteContentUpdateView, EditableFieldsView, MediaUploadView, SiteContentView,
     AllSiteContentView, PublicSiteContentView, AvailableUpgradeView, TemplateUpgradeView,
+    AvailableTemplatesView, TemplateSwitchView,
 )
 urlpatterns = [
     path("site-content/", SiteContentUpdateView.as_view(), name="site-content-update"),
@@ -12,4 +13,6 @@ urlpatterns = [
     path("media/", MediaUploadView.as_view(), name="media-upload"),
     path("template/available-upgrade/", AvailableUpgradeView.as_view(), name="template-available-upgrade"),
     path("template/upgrade/", TemplateUpgradeView.as_view(), name="template-upgrade"),
+    path("template/available-templates/", AvailableTemplatesView.as_view(), name="template-available-templates"),
+    path("template/switch/", TemplateSwitchView.as_view(), name="template-switch"),
 ]

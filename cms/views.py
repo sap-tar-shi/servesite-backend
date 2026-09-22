@@ -8,8 +8,8 @@ from django.conf import settings
 from .tasks import generate_thumbnail, revalidate_public_site
 from .models import SiteConfig, Section, MediaAsset
 from .manifest import filter_to_whitelisted_fields, NonWhitelistedFieldError, get_editable_fields
-from templates_registry.models import TemplateVersion
-from templates_registry.serializers import TemplateVersionSerializer
+from templates_registry.models import TemplateVersion, TemplateRegistry
+from templates_registry.serializers import TemplateVersionSerializer, TemplateRegistryWithLatestVersionSerializer
 
 
 class SiteContentUpdateView(APIView):
@@ -275,3 +275,67 @@ class TemplateUpgradeView(APIView):
         revalidate_public_site.delay(request.tenant.slug)
 
         return Response(TemplateVersionSerializer(target).data)
+
+
+class AvailableTemplatesView(APIView):
+    """
+    GET /api/cms/template/available-templates/
+
+    Lists every OTHER active template family (excludes the tenant's
+    currently pinned family - that's not a "switch"), each with its latest
+    version, for a template-picker UI. P4-T3.
+    """
+
+    permission_classes = [HasModulePermission("site_customization")]
+
+    def get(self, request):
+        site_config = SiteConfig.objects.select_related("template_version__template").get(tenant=request.tenant)
+        current_family_id = site_config.template_version.template_id
+
+        families = TemplateRegistry.objects.filter(status="active").exclude(id=current_family_id)
+        return Response(TemplateRegistryWithLatestVersionSerializer(families, many=True).data)
+
+
+class TemplateSwitchView(APIView):
+    """
+    POST /api/cms/template/switch/
+    Body: {"template_id": "<TemplateRegistry uuid>"}
+
+    Re-pins SiteConfig.template_version to the LATEST active version of a
+    DIFFERENT template family. Content (cms.Section rows) is untouched -
+    per arch §6, content is stored independent of template, so nothing
+    needs migrating; the new template simply renders whatever of it its
+    own manifest declares. Rejects switching to the tenant's own current
+    family (400) - use TemplateUpgradeView for that instead.
+    """
+
+    permission_classes = [HasModulePermission("site_customization")]
+
+    def post(self, request):
+        target_family_id = request.data.get("template_id")
+        if not target_family_id:
+            return Response({"detail": "template_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        site_config = SiteConfig.objects.select_related("template_version__template").get(tenant=request.tenant)
+        current_family_id = site_config.template_version.template_id
+
+        if str(target_family_id) == str(current_family_id):
+            return Response(
+                {"detail": "Already on this template family. Use the upgrade flow for a newer version of the same template."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            target_family = TemplateRegistry.objects.get(id=target_family_id, status="active")
+        except TemplateRegistry.DoesNotExist:
+            return Response({"detail": "Template not found or not active."}, status=status.HTTP_404_NOT_FOUND)
+
+        latest_version = target_family.versions.order_by("-sequence").first()
+        if latest_version is None:
+            return Response({"detail": "Target template has no published versions."}, status=status.HTTP_400_BAD_REQUEST)
+
+        site_config.template_version = latest_version
+        site_config.save(update_fields=["template_version"])
+        revalidate_public_site.delay(request.tenant.slug)
+
+        return Response(TemplateVersionSerializer(latest_version).data)
