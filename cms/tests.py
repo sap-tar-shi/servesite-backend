@@ -140,3 +140,53 @@ class WhitelistedEditFieldTests(TestCase):
         resp = self.client.get("/api/cms/editable-fields/", HTTP_HOST="edit-tenant.localhost")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(set(resp.json()["editable_fields"]), {"headline", "tagline"})
+
+class TemplateUpgradeTests(TestCase):
+    def setUp(self):
+        self.tenant = Tenant.objects.create(slug="upgrade-tenant", name="Upgrade Tenant")
+        self.host = "upgrade-tenant.localhost"
+        self.owner = User.objects.create_user(email="owner@upgrade.com", password="testpass123")
+        Membership.objects.create(user=self.owner, tenant=self.tenant, role=Membership.ROLE_OWNER)
+
+        self.family = TemplateRegistry.objects.create(name="test-family", display_name="Test Family")
+        self.v1 = TemplateVersion.objects.create(
+            template=self.family, version="1.0.0", capability_manifest={"sections": [], "editable_fields": [], "theme_tokens": []},
+        )
+        self.v2 = TemplateVersion.objects.create(
+            template=self.family, version="1.1.0", capability_manifest={"sections": [], "editable_fields": [], "theme_tokens": []},
+        )
+        other_family = TemplateRegistry.objects.create(name="other-family", display_name="Other Family")
+        self.other_version = TemplateVersion.objects.create(
+            template=other_family, version="1.0.0", capability_manifest={"sections": [], "editable_fields": [], "theme_tokens": []},
+        )
+
+        token = set_current_tenant(self.tenant)
+        set_tenant_guc(self.tenant.id)
+        SiteConfig.objects.create(tenant=self.tenant, template_version=self.v1)
+        reset_current_tenant(token)
+        set_tenant_guc(None)
+
+        self.client.post("/api/auth/login/", {"email": "owner@upgrade.com", "password": "testpass123"},
+            content_type="application/json", HTTP_HOST=self.host)
+
+    def test_available_upgrade_reports_newer_same_family_version(self):
+        resp = self.client.get("/api/cms/template/available-upgrade/", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json()["available_upgrade"]["id"], str(self.v2.id))
+
+    def test_upgrade_repins_to_newer_version(self):
+        resp = self.client.post("/api/cms/template/upgrade/", {"template_version_id": str(self.v2.id)},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 200)
+        site_config = SiteConfig.unscoped.get(tenant=self.tenant)
+        self.assertEqual(site_config.template_version_id, self.v2.id)
+
+    def test_upgrade_rejects_cross_family_target(self):
+        resp = self.client.post("/api/cms/template/upgrade/", {"template_version_id": str(self.other_version.id)},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 400)
+
+    def test_upgrade_rejects_non_newer_version(self):
+        resp = self.client.post("/api/cms/template/upgrade/", {"template_version_id": str(self.v1.id)},
+            content_type="application/json", HTTP_HOST=self.host)
+        self.assertEqual(resp.status_code, 400)

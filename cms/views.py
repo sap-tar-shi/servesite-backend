@@ -8,6 +8,8 @@ from django.conf import settings
 from .tasks import generate_thumbnail, revalidate_public_site
 from .models import SiteConfig, Section, MediaAsset
 from .manifest import filter_to_whitelisted_fields, NonWhitelistedFieldError, get_editable_fields
+from templates_registry.models import TemplateVersion
+from templates_registry.serializers import TemplateVersionSerializer
 
 
 class SiteContentUpdateView(APIView):
@@ -193,3 +195,83 @@ class PublicSiteContentView(APIView):
                 "opening_hours": contact.get("opening_hours", ""),
             },
         })
+
+class AvailableUpgradeView(APIView):
+    """
+    GET /api/cms/template/available-upgrade/
+
+    Returns the next newer TemplateVersion in the SAME template family as
+    the tenant's currently pinned version, if one exists - or null. Per
+    P4-T2 AC: this is read-only discovery; nothing changes until the owner
+    explicitly calls TemplateUpgradeView below.
+    """
+
+    permission_classes = [HasModulePermission("site_customization")]
+
+    def get(self, request):
+        site_config = SiteConfig.objects.select_related(
+            "template_version__template"
+        ).get(tenant=request.tenant)
+        current = site_config.template_version
+
+        newer = (
+            TemplateVersion.objects.filter(
+                template=current.template,
+                template__status="active",
+                sequence__gt=current.sequence,
+            )
+            .order_by("-sequence")
+            .first()
+        )
+
+        return Response({
+            "current_version": TemplateVersionSerializer(current).data,
+            "available_upgrade": TemplateVersionSerializer(newer).data if newer else None,
+        })
+
+
+class TemplateUpgradeView(APIView):
+    """
+    POST /api/cms/template/upgrade/
+    Body: {"template_version_id": "<uuid>"}
+
+    Re-pins SiteConfig.template_version to a newer version WITHIN THE SAME
+    template family. Rejects (400) any target that is a different template
+    family (that's P4-T3's job, not this endpoint's) or is not strictly
+    newer than the currently pinned version (no accidental downgrades).
+    Content is untouched - only the FK changes, per arch §6.
+    """
+
+    permission_classes = [HasModulePermission("site_customization")]
+
+    def post(self, request):
+        target_id = request.data.get("template_version_id")
+        if not target_id:
+            return Response({"detail": "template_version_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        site_config = SiteConfig.objects.select_related(
+            "template_version__template"
+        ).get(tenant=request.tenant)
+        current = site_config.template_version
+
+        try:
+            target = TemplateVersion.objects.select_related("template").get(id=target_id)
+        except TemplateVersion.DoesNotExist:
+            return Response({"detail": "Template version not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        if target.template_id != current.template_id:
+            return Response(
+                {"detail": "Target version belongs to a different template family. Use the template switch flow instead."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if target.sequence <= current.sequence:
+            return Response(
+                {"detail": "Target version is not newer than the currently pinned version."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        site_config.template_version = target
+        site_config.save(update_fields=["template_version"])
+        revalidate_public_site.delay(request.tenant.slug)
+
+        return Response(TemplateVersionSerializer(target).data)

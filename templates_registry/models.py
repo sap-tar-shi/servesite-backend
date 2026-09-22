@@ -65,6 +65,7 @@ class TemplateVersion(models.Model):
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    sequence = models.BigIntegerField(unique=True, editable=False, null=True)
     template = models.ForeignKey(TemplateRegistry, on_delete=models.CASCADE, related_name="versions")
     version = models.CharField(max_length=20)  # semver string, e.g. "1.0.0"
     capability_manifest = models.JSONField(validators=[validate_capability_manifest])
@@ -80,3 +81,18 @@ class TemplateVersion(models.Model):
 
     def __str__(self):
         return f"{self.template.name}@{self.version}"
+    
+    def save(self, *args, **kwargs):
+        """
+        Assigns a monotonic `sequence` on first save. Not atomic under
+        concurrent publishes (a race could in theory skip/collide a number),
+        but TemplateVersion is written only by super-admin tooling (P3-T8),
+        which is low-frequency/low-concurrency - acceptable here versus the
+        complexity of a DB-level sequence. If super-admin publishing ever
+        becomes concurrent/high-volume, revisit with a Postgres sequence or
+        SELECT ... FOR UPDATE.
+        """
+        if self.sequence is None:
+            last = TemplateVersion.objects.aggregate(models.Max("sequence"))["sequence__max"] or 0
+            self.sequence = last + 1
+        super().save(*args, **kwargs)
