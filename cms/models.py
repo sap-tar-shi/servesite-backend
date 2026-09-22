@@ -107,3 +107,44 @@ class MediaAsset(TenantScopedModel):
 
     def __str__(self):
         return f"{self.tenant.slug}/{self.storage_key}"
+
+
+
+class BlogPost(TenantScopedModel):
+    """
+    P4-T5. Deliberately its own model, not a Section - a blog is a list of
+    many independent items with their own slug/date/publish-state, unlike
+    Section's "one fixed slot per manifest-declared section_type" shape.
+    Ties to the tenant's existing Page(page_type=Page.TYPE_BLOG) row only
+    loosely (via that page's `enabled` flag, checked in the view) rather
+    than a FK - a BlogPost's lifecycle doesn't depend on the Page row
+    existing first.
+    """
+
+    STATUS_DRAFT = "draft"
+    STATUS_PUBLISHED = "published"
+    STATUS_CHOICES = [
+        (STATUS_DRAFT, "Draft"),
+        (STATUS_PUBLISHED, "Published"),
+    ]
+
+    title = models.CharField(max_length=200)
+    slug = models.SlugField(max_length=220)
+    excerpt = models.CharField(max_length=300, blank=True, default="")
+    content = models.TextField(blank=True, default="")  # simple HTML/markdown body - no block-editor scope here
+    cover_image = models.URLField(blank=True, null=True)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default=STATUS_DRAFT)
+    published_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta(TenantScopedModel.Meta):
+        db_table = "cms_blog_post"
+        constraints = [
+            models.UniqueConstraint(fields=["tenant", "slug"], name="unique_blog_slug_per_tenant"),
+        ]
+        indexes = TenantScopedModel.Meta.indexes + [
+            models.Index(fields=["tenant", "status", "published_at"]),
+        ]
+        ordering = ["-published_at"]
+
+    def __str__(self):
+        return f"{self.tenant.slug}/blog/{self.slug}"

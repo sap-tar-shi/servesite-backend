@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import SiteConfig, Section
+from .models import SiteConfig, Section, BlogPost
 
 
 class ContentUpdateSerializer(serializers.Serializer):
@@ -10,3 +10,10 @@ class ContentUpdateSerializer(serializers.Serializer):
     """
 
     fields = serializers.DictField()
+
+
+class BlogPostSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = BlogPost
+        fields = ["id", "title", "slug", "excerpt", "content", "cover_image", "status", "published_at"]
+        read_only_fields = ["id"]

@@ -1,13 +1,17 @@
+from django.utils import timezone
+from django.conf import settings
+from django.utils.text import slugify
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import AllowAny
 from accounts.permissions import HasModulePermission
-from django.conf import settings
 from .tasks import generate_thumbnail, revalidate_public_site
-from .models import SiteConfig, Section, MediaAsset
+from .models import SiteConfig, Section, MediaAsset, BlogPost
+from .serializers import ContentUpdateSerializer, BlogPostSerializer
 from .manifest import filter_to_whitelisted_fields, NonWhitelistedFieldError, get_editable_fields
+from billing.services import enforce_bool_flag, FeatureLimitExceeded
 from templates_registry.models import TemplateVersion, TemplateRegistry
 from templates_registry.serializers import TemplateVersionSerializer, TemplateRegistryWithLatestVersionSerializer
 
@@ -339,3 +343,120 @@ class TemplateSwitchView(APIView):
         revalidate_public_site.delay(request.tenant.slug)
 
         return Response(TemplateVersionSerializer(latest_version).data)
+
+
+
+class BlogPostListCreateView(APIView):
+    """
+    GET  /api/cms/blog/       - all posts (draft + published) for the admin list view
+    POST /api/cms/blog/       - create a post, gated on feature_limits.blog_allowed (P3-T1)
+
+    Note: gating happens on CREATE only, not on later edits/publishing of
+    an already-existing post - if an owner downgrades plans after already
+    having posts, those posts aren't retroactively deleted, matching the
+    "content is never destroyed by a plan change" convention already
+    established for other limits in this codebase.
+    """
+
+    permission_classes = [HasModulePermission("blog_management")]
+
+    def get(self, request):
+        posts = BlogPost.objects.all()
+        return Response(BlogPostSerializer(posts, many=True).data)
+
+    def post(self, request):
+        try:
+            enforce_bool_flag(request.tenant, limit_key="blog_allowed", feature_label="Blog")
+        except FeatureLimitExceeded as e:
+            return Response({"detail": str(e)}, status=status.HTTP_403_FORBIDDEN)
+
+        data = request.data.copy()
+        if not data.get("slug") and data.get("title"):
+            data["slug"] = slugify(data["title"])
+
+        serializer = BlogPostSerializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        post = serializer.save(tenant=request.tenant)
+
+        if post.status == BlogPost.STATUS_PUBLISHED and post.published_at is None:
+            post.published_at = timezone.now()
+            post.save(update_fields=["published_at"])
+            revalidate_public_site.delay(request.tenant.slug)
+
+        return Response(BlogPostSerializer(post).data, status=status.HTTP_201_CREATED)
+
+
+class BlogPostDetailView(APIView):
+    """
+    GET/PATCH/DELETE /api/cms/blog/<uuid:post_id>/
+
+    No feature-gate check here (see note on BlogPostListCreateView above) -
+    only creation is gated.
+    """
+
+    permission_classes = [HasModulePermission("blog_management")]
+
+    def get_object(self, request, post_id):
+        return BlogPost.objects.get(id=post_id)
+
+    def get(self, request, post_id):
+        try:
+            post = self.get_object(request, post_id)
+        except BlogPost.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(BlogPostSerializer(post).data)
+
+    def patch(self, request, post_id):
+        try:
+            post = self.get_object(request, post_id)
+        except BlogPost.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+        was_published = post.status == BlogPost.STATUS_PUBLISHED
+        serializer = BlogPostSerializer(post, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        post = serializer.save()
+
+        just_published = not was_published and post.status == BlogPost.STATUS_PUBLISHED
+        if just_published and post.published_at is None:
+            post.published_at = timezone.now()
+            post.save(update_fields=["published_at"])
+
+        revalidate_public_site.delay(request.tenant.slug)
+        return Response(BlogPostSerializer(post).data)
+
+    def delete(self, request, post_id):
+        try:
+            post = self.get_object(request, post_id)
+        except BlogPost.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        post.delete()
+        revalidate_public_site.delay(request.tenant.slug)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class PublicBlogListView(APIView):
+    """
+    GET /api/cms/public/blog/ - AllowAny, PUBLISHED posts only, newest first.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        posts = BlogPost.objects.filter(status=BlogPost.STATUS_PUBLISHED).order_by("-published_at")
+        return Response(BlogPostSerializer(posts, many=True).data)
+
+
+class PublicBlogDetailView(APIView):
+    """
+    GET /api/cms/public/blog/<slug>/ - AllowAny, single published post.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request, slug):
+        try:
+            post = BlogPost.objects.get(slug=slug, status=BlogPost.STATUS_PUBLISHED)
+        except BlogPost.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(BlogPostSerializer(post).data)

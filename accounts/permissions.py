@@ -8,6 +8,7 @@ from .models import Membership
 MODULE_ROLE_MATRIX = {
     "site_customization": {Membership.ROLE_OWNER},
     "menu_management": {Membership.ROLE_OWNER, Membership.ROLE_MANAGER},
+    "blog_management": {Membership.ROLE_OWNER, Membership.ROLE_MANAGER},
     "live_orders": {Membership.ROLE_OWNER, Membership.ROLE_MANAGER, Membership.ROLE_KITCHEN, Membership.ROLE_WAITER, Membership.ROLE_STAFF},
     "billing_staff_domains": {Membership.ROLE_OWNER},
 }
