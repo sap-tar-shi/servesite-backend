@@ -61,6 +61,7 @@ INSTALLED_APPS = [
     "orders",
     "payments",
     "billing",
+    "domains",
     "platform_admin",
 ]
 
@@ -212,6 +213,9 @@ AWS_CLOUDFRONT_DOMAIN = env_config("AWS_CLOUDFRONT_DOMAIN", default="")
 AWS_S3_CUSTOM_DOMAIN = AWS_CLOUDFRONT_DOMAIN
 AWS_DEFAULT_ACL = None
 AWS_QUERYSTRING_AUTH = False
+AWS_ACM_REGION = env_config("AWS_ACM_REGION", default="us-east-1")  # CloudFront requires ACM certs in us-east-1
+CLOUDFRONT_DISTRIBUTION_ID = env_config("CLOUDFRONT_DISTRIBUTION_ID", default="")
+PLATFORM_APEX_DOMAIN = env_config("PLATFORM_APEX_DOMAIN", default="platform.com")  # what owners CNAME toward
 
 if AWS_STORAGE_BUCKET_NAME:
     STORAGES = {
@@ -265,6 +269,10 @@ CELERY_BEAT_SCHEDULE = {
     "check-dunning-suspensions": {
         "task": "billing.tasks.check_dunning_suspensions",
         "schedule": 3600.0,  # hourly
+    },
+    "check-domain-verifications": {
+        "task": "domains.tasks.poll_pending_domain_verifications",
+        "schedule": 300.0,  # every 5 minutes - ACM validation isn't instant
     },
 }
 
