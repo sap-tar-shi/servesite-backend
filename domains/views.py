@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
+from rest_framework.permissions import AllowAny
 import dns.resolver
 from django.utils import timezone
 from accounts.permissions import HasModulePermission
@@ -97,3 +98,31 @@ class DomainVerifyView(APIView):
         poll_single_domain_verification.delay(str(domain.id))
 
         return Response(DomainSerializer(domain).data)
+
+
+class PublicDomainResolveView(APIView):
+    """
+    GET /api/domains/resolve/?hostname=mycafe.com
+
+    AllowAny - called by the Next.js middleware (frontend, not yet built as
+    of this point) BEFORE any tenant is known, purely to answer "which
+    tenant does this custom domain belong to." Deliberately uses
+    Domain.unscoped: this lookup is inherently cross-tenant by nature (we
+    don't know the tenant yet - that's the whole question), same category
+    as the audited cross-tenant reads elsewhere in the platform. Only
+    ACTIVE domains resolve - pending/failed domains 404, so an
+    unverified/mid-issuance domain never accidentally serves traffic.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        hostname = request.query_params.get("hostname", "").strip().lower()
+        if not hostname:
+            return Response({"detail": "hostname query param is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        domain = Domain.unscoped.filter(hostname=hostname, status=Domain.STATUS_ACTIVE).select_related("tenant").first()
+        if domain is None:
+            return Response({"detail": "No active custom domain found for this hostname."}, status=status.HTTP_404_NOT_FOUND)
+
+        return Response({"slug": domain.tenant.slug})
