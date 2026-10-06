@@ -14,6 +14,7 @@ from .serializers import TenantAdminSerializer, AuditLogSerializer
 from .models import SuperAdmin, AuditLog
 from .permissions import IsPlatformAdminOrigin, IsSuperAdminAuthenticated
 from templates_registry.models import TemplateRegistry, TemplateVersion
+from tenants.services import provision_tenant, SlugTaken
 from templates_registry.serializers import (
     TemplateRegistrySerializer, TemplateRegistryWriteSerializer, TemplateVersionSerializer,
 )
@@ -79,21 +80,16 @@ class TenantListCreateView(APIView):
         if not (slug and name and owner_email):
             return Response({"detail": "slug, name, and owner_email are all required."}, status=status.HTTP_400_BAD_REQUEST)
 
-        if Tenant.objects.filter(slug=slug).exists():
-            return Response({"detail": "That slug is already taken."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            tenant, owner_user, owner_created, temp_password = provision_tenant(slug, name, owner_email)
+        except SlugTaken as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
 
-        tenant = Tenant.objects.create(slug=slug, name=name, status=Tenant.STATUS_TRIAL)
-        # shared staff account is auto-provisioned by accounts/signals.py's
-        # post_save receiver - nothing to do here for that part.
-
-        owner_user, owner_created = User.objects.get_or_create(email=owner_email)
-        temp_password = None
+        # Operator-created tenants skip email verification entirely -
+        # the super-admin vouching for the owner IS the verification.
         if owner_created:
-            import secrets
-            temp_password = secrets.token_urlsafe(12)
-            owner_user.set_password(temp_password)
-            owner_user.save()
-        Membership.objects.get_or_create(user=owner_user, tenant=tenant, defaults={"role": Membership.ROLE_OWNER})
+            owner_user.is_email_verified = True
+            owner_user.save(update_fields=["is_email_verified"])
 
         _log(request, "tenant.create", tenant=tenant, details={"owner_email": owner_email, "owner_created": owner_created})
 

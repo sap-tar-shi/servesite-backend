@@ -1,6 +1,9 @@
+import secrets
 import uuid
+from datetime import timedelta
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
+from django.utils import timezone
 
 
 class UserManager(BaseUserManager):
@@ -27,9 +30,11 @@ class User(AbstractBaseUser, PermissionsMixin):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     email = models.EmailField(unique=True)
+    name = models.CharField(max_length=255, blank=True)
     phone = models.CharField(max_length=20, blank=True, null=True)
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)  # Django admin access only
+    is_email_verified = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
     objects = UserManager()
@@ -75,3 +80,29 @@ class Membership(models.Model):
 
     def __str__(self):
         return f"{self.user.email} @ {self.tenant.slug} ({self.role})"
+
+def _generate_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def _default_expiry():
+    return timezone.now() + timedelta(hours=48)
+
+
+class EmailVerificationToken(models.Model):
+    """One-time token emailed to a new owner at signup. Consumed by
+    VerifyEmailView, which marks User.is_email_verified=True. Skipped
+    entirely in dev when settings.SKIP_EMAIL_VERIFICATION is True."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="email_verification_tokens")
+    token = models.CharField(max_length=64, unique=True, default=_generate_token)
+    expires_at = models.DateTimeField(default=_default_expiry)
+    used_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "accounts_email_verification_token"
+
+    def is_valid(self) -> bool:
+        return self.used_at is None and self.expires_at > timezone.now()

@@ -33,6 +33,9 @@ DEBUG = env_config("DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS = env_config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
 
 ENVIRONMENT = env_config("ENVIRONMENT", default="local")  # local | staging | prod
+SKIP_EMAIL_VERIFICATION = env_config("SKIP_EMAIL_VERIFICATION", default=DEBUG, cast=bool)
+FRONTEND_APEX_URL = env_config("FRONTEND_APEX_URL", default="http://localhost:3000")
+DEFAULT_FROM_EMAIL = env_config("DEFAULT_FROM_EMAIL", default="hello@servesite.app")
 
 REVALIDATE_SECRET = env_config("REVALIDATE_SECRET", default="")
 
@@ -232,6 +235,10 @@ CSRF_TRUSTED_ORIGINS = ["http://*.localhost:3000"]
 CORS_ALLOWED_ORIGIN_REGEXES = [
     r"^http://[\w-]+\.localhost:3000$",
 ]
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+]
+
 CORS_ALLOW_CREDENTIALS = True
 
 
@@ -246,6 +253,9 @@ REST_FRAMEWORK = {
         "rest_framework.renderers.JSONRenderer",
         "rest_framework.renderers.BrowsableAPIRenderer",
     ],
+    "DEFAULT_THROTTLE_RATES": {
+        "signup": "10/hour",
+    },
 }
 
 

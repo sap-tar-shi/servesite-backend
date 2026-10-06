@@ -1,6 +1,7 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import permissions, status
+from rest_framework.permissions import AllowAny
 from accounts.permissions import HasModulePermission
 from .models import Plan, Subscription
 from .serializers import PlanSerializer, SubscriptionSerializer
@@ -25,6 +26,18 @@ class PlanListView(APIView):
 
     def get(self, request):
         plans = Plan.objects.filter(is_active=True)
+        return Response(PlanSerializer(plans, many=True).data)
+
+
+class PublicPlanListView(APIView):
+    """Unauthenticated plan list for the public pricing page. Reuses
+    PlanSerializer, which already excludes razorpay_plan_id/is_active -
+    nothing sensitive is exposed here."""
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        plans = Plan.objects.filter(is_active=True).order_by("price")
         return Response(PlanSerializer(plans, many=True).data)
 
 

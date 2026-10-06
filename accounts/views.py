@@ -1,14 +1,19 @@
 import secrets
+from django.conf import settings
 from django.contrib.auth import authenticate, login, logout
+from django.core.mail import send_mail
+from django.utils import timezone
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, permissions
-from .serializers import LoginSerializer
-from .models import User, Membership
+from rest_framework.throttling import AnonRateThrottle
+from .serializers import LoginSerializer, SignupSerializer
+from .models import User, Membership, EmailVerificationToken
 from .permissions import HasModulePermission
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.utils.decorators import method_decorator
 from billing.services import enforce_count_limit, FeatureLimitExceeded
+from tenants.services import provision_tenant, suggest_slugs, SlugTaken
 
 
 def _serialize_user_with_memberships(user):
@@ -36,6 +41,11 @@ class LoginView(APIView):
         )
         if user is None:
             return Response({"detail": "Invalid credentials"}, status=status.HTTP_401_UNAUTHORIZED)
+        if not user.is_email_verified and not settings.SKIP_EMAIL_VERIFICATION:
+            return Response(
+                {"detail": "Please verify your email before signing in. Check your inbox for the verification link."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
         login(request, user)
         return Response(_serialize_user_with_memberships(user))
 
@@ -69,6 +79,88 @@ class PricingView(APIView):
 
     def get(self, request):
         return Response({"prices": ["confidential-pricing-data"]})
+
+
+class SignupRateThrottle(AnonRateThrottle):
+    scope = "signup"
+
+
+def _send_verification_email(user, token: str):
+    verify_url = f"{settings.FRONTEND_APEX_URL}/verify-email?token={token}"
+    send_mail(
+        subject="Verify your ServeSite account",
+        message=f"Click to verify your email and finish setting up your restaurant:\n\n{verify_url}",
+        from_email=settings.DEFAULT_FROM_EMAIL,
+        recipient_list=[user.email],
+    )
+
+
+class SignupView(APIView):
+    """Public. Anyone who signs up is provisioned as the owner of a brand-new
+    restaurant. If the email already exists, we don't silently attach a new
+    tenant to it - they're told to log in instead."""
+
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [SignupRateThrottle]
+
+    def post(self, request):
+        serializer = SignupSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        if User.objects.filter(email=data["email"]).exists():
+            return Response(
+                {"detail": "An account with this email already exists. Log in instead."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            tenant, owner_user, _owner_created, _temp_password = provision_tenant(
+                slug=data["slug"], name=data["restaurant_name"],
+                owner_email=data["email"], owner_password=data["password"],
+            )
+        except SlugTaken as e:
+            return Response({"detail": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        owner_user.name = data["owner_name"]
+
+        if settings.SKIP_EMAIL_VERIFICATION:
+            owner_user.is_email_verified = True
+            owner_user.save(update_fields=["name", "is_email_verified"])
+            return Response({"tenant_slug": tenant.slug, "email_verification_required": False}, status=status.HTTP_201_CREATED)
+
+        owner_user.save(update_fields=["name"])
+        verification = EmailVerificationToken.objects.create(user=owner_user)
+        _send_verification_email(owner_user, verification.token)
+        return Response({"tenant_slug": tenant.slug, "email_verification_required": True}, status=status.HTTP_201_CREATED)
+
+
+class VerifyEmailView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def post(self, request):
+        token = request.data.get("token", "")
+        verification = EmailVerificationToken.objects.filter(token=token).select_related("user").first()
+        if verification is None or not verification.is_valid():
+            return Response({"detail": "This verification link is invalid or has expired."}, status=status.HTTP_400_BAD_REQUEST)
+
+        verification.used_at = timezone.now()
+        verification.save(update_fields=["used_at"])
+        verification.user.is_email_verified = True
+        verification.user.save(update_fields=["is_email_verified"])
+
+        membership = Membership.objects.filter(user=verification.user, role=Membership.ROLE_OWNER).select_related("tenant").first()
+        return Response({"tenant_slug": membership.tenant.slug if membership else None})
+
+
+class SlugSuggestionsView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        name = request.query_params.get("name", "").strip()
+        if not name:
+            return Response({"suggestions": []})
+        return Response({"suggestions": suggest_slugs(name)})
 
 
 class SiteCustomizationView(APIView):
