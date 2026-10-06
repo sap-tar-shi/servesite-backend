@@ -2,8 +2,8 @@ from django.urls import path
 from .views import (
     SiteContentUpdateView, EditableFieldsView, MediaUploadView, SiteContentView,
     AllSiteContentView, PublicSiteContentView, AvailableUpgradeView, TemplateUpgradeView,
-    AvailableTemplatesView, TemplateSwitchView, BlogPostListCreateView, BlogPostDetailView,
-    PublicBlogListView, PublicBlogDetailView,
+    AvailableTemplatesView, TemplateSwitchView, TemplateCatalogView, TemplateSelectView,
+    BlogPostListCreateView, BlogPostDetailView, PublicBlogListView, PublicBlogDetailView,
 )
 
 
@@ -14,6 +14,8 @@ urlpatterns = [
     path("public/site-content/", PublicSiteContentView.as_view(), name="public-site-content"),
     path("editable-fields/", EditableFieldsView.as_view(), name="editable-fields"),
     path("media/", MediaUploadView.as_view(), name="media-upload"),
+    path("template/catalog/", TemplateCatalogView.as_view(), name="template-catalog"),
+    path("template/select/", TemplateSelectView.as_view(), name="template-select"),
     path("template/available-upgrade/", AvailableUpgradeView.as_view(), name="template-available-upgrade"),
     path("template/upgrade/", TemplateUpgradeView.as_view(), name="template-upgrade"),
     path("template/available-templates/", AvailableTemplatesView.as_view(), name="template-available-templates"),

@@ -1,4 +1,5 @@
 import secrets
+from django.db import transaction
 from django.utils.text import slugify
 from .models import Tenant
 from accounts.models import User, Membership
@@ -8,11 +9,13 @@ class SlugTaken(Exception):
     pass
 
 
+@transaction.atomic
 def provision_tenant(slug: str, name: str, owner_email: str, owner_password: str | None = None):
     """
-    Creates a Tenant + its owner User + owner Membership. Shared by
-    platform_admin.TenantListCreateView (operator-provisioned) and
-    accounts.SignupView (self-serve) so the two paths can never drift.
+    Creates a Tenant + its owner User + owner Membership. The tenant's
+    SiteConfig is deliberately NOT created here - the owner picks their
+    template from the admin (cms.provisioning.select_template).
+    Shared by platform_admin.TenantListCreateView and accounts.SignupView.
     Returns (tenant, owner_user, owner_created, temp_password).
     """
     slug = slug.strip().lower()

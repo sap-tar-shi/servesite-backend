@@ -1,6 +1,7 @@
 from django.utils import timezone
 from django.conf import settings
 from django.utils.text import slugify
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
@@ -8,7 +9,8 @@ from rest_framework.parsers import MultiPartParser
 from rest_framework.permissions import AllowAny
 from accounts.permissions import HasModulePermission
 from .tasks import generate_thumbnail, revalidate_public_site
-from .models import SiteConfig, Section, MediaAsset, BlogPost
+from .provisioning import ensure_templates, select_template
+from .models import SiteConfig, Page, Section, MediaAsset, BlogPost
 from .serializers import ContentUpdateSerializer, BlogPostSerializer
 from .manifest import filter_to_whitelisted_fields, NonWhitelistedFieldError, get_editable_fields
 from billing.services import enforce_bool_flag, FeatureLimitExceeded
@@ -55,10 +57,11 @@ class SiteContentUpdateView(APIView):
                 status=status.HTTP_403_FORBIDDEN,
             )
 
+        landing, _ = Page.objects.get_or_create(
+            tenant=request.tenant, page_type=Page.TYPE_LANDING, defaults={"enabled": True},
+        )
         section, _ = Section.objects.get_or_create(
-            tenant=request.tenant,
-            page__page_type="landing",
-            section_type=section_type,
+            tenant=request.tenant, page=landing, section_type=section_type,
             defaults={"content": {}},
         )
         section.content.update(validated_fields)
@@ -182,7 +185,11 @@ class PublicSiteContentView(APIView):
         about = sections.get("about", {})
         contact = sections.get("contact", {})
 
+        site_config = SiteConfig.objects.select_related("template_version__template").filter(tenant=request.tenant).first()
+        template_name = site_config.template_version.template.name if site_config else None
+
         return Response({
+            "template": template_name,
             "restaurant_name": hero.get("restaurant_name", request.tenant.name),
             "logo": hero.get("logo"),
             "hero": {
@@ -345,6 +352,73 @@ class TemplateSwitchView(APIView):
         return Response(TemplateVersionSerializer(latest_version).data)
 
 
+
+class TemplateCatalogView(APIView):
+    """
+    GET /api/cms/template/catalog/
+
+    Every active template family with its latest version, plus which one
+    (if any) this tenant is currently pinned to. Works BEFORE a SiteConfig
+    exists - that's how a brand-new owner sees what to choose from.
+    """
+
+    permission_classes = [HasModulePermission("site_customization")]
+
+    def get(self, request):
+        ensure_templates()
+        site_config = SiteConfig.objects.select_related("template_version").filter(tenant=request.tenant).first()
+        current = site_config.template_version if site_config else None
+
+        templates = []
+        for family in TemplateRegistry.objects.filter(status="active").order_by("display_name"):
+            latest = family.versions.order_by("-sequence").first()
+            is_current = bool(current and current.template_id == family.id)
+            templates.append({
+                "id": str(family.id),
+                "name": family.name,
+                "display_name": family.display_name,
+                "preview_image": family.preview_image,
+                "latest_version": TemplateVersionSerializer(latest).data if latest else None,
+                "is_current": is_current,
+                "upgrade_available": bool(is_current and latest and latest.sequence > current.sequence),
+            })
+
+        return Response({
+            "has_site_config": site_config is not None,
+            "current_version": TemplateVersionSerializer(current).data if current else None,
+            "templates": templates,
+        })
+
+
+class TemplateSelectView(APIView):
+    """
+    POST /api/cms/template/select/   Body: {"template_id": "<TemplateRegistry uuid>"}
+
+    First choice: creates the tenant's SiteConfig (+ pages/sections), which
+    is what connects the tenant's slug to a template. Later calls re-pin to
+    that family's latest version (switching families, or upgrading the
+    current one). Content is never touched.
+    """
+
+    permission_classes = [HasModulePermission("site_customization")]
+
+    def post(self, request):
+        template_id = request.data.get("template_id")
+        if not template_id:
+            return Response({"detail": "template_id is required."}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            family = TemplateRegistry.objects.get(id=template_id, status="active")
+        except (TemplateRegistry.DoesNotExist, DjangoValidationError, ValueError):
+            return Response({"detail": "Template not found or not active."}, status=status.HTTP_404_NOT_FOUND)
+
+        if not family.versions.exists():
+            return Response({"detail": "Template has no published versions."}, status=status.HTTP_400_BAD_REQUEST)
+
+        site_config = select_template(request.tenant, family)
+        revalidate_public_site.delay(request.tenant.slug)
+        return Response(TemplateVersionSerializer(site_config.template_version).data)
+        
 
 class BlogPostListCreateView(APIView):
     """

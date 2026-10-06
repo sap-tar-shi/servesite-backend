@@ -5,3 +5,9 @@ __pycache__/
 db.sqlite3
 staticfiles/
 media/.env 
+venv/
+db.sqlite3
+cookies.txt
+test.txt
+*.msi
+.env

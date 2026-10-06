@@ -135,6 +135,7 @@ AUTH_PASSWORD_VALIDATORS = [
 LANGUAGE_CODE = "en-us"
 
 TIME_ZONE = "UTC"
+STATS_TIME_ZONE = "Asia/Kolkata"  # zone used for "today" / daily buckets on the dashboard
 
 USE_I18N = True
 
